@@ -20,30 +20,24 @@ Heimdall sits in between. It's two native executables totalling under 2 MB, with
 
 ## Install
 
-1. Download `Heimdall-1.0.0-x64.zip` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and unzip it anywhere.
-2. Right-click `install.ps1` and choose **Run with PowerShell**. Alternatively, run it from a terminal:
+1. Download `Heimdall-1.0.0-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. It installs for your user only, so it doesn't need admin.
+2. Press **F5**.
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\install.ps1
-   ```
-
-3. Press **F5**.
-
-That copies Heimdall to `%LOCALAPPDATA%\Programs\Heimdall`, starts it, and sets it to start with Windows.
+The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu, starts it, and sets it to start with Windows.
 
 ### The indexer service (recommended)
 
-Heimdall can index your drives by itself, but the indexer service is much faster and lighter. It reads the NTFS master file table directly, keeps up with changes through the USN journal, and holds the index outside the launcher process. Installing it needs one admin prompt:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Indexer
-```
+Heimdall can index your drives by itself, but the indexer service is much faster and lighter. It reads the NTFS master file table directly, keeps up with changes through the USN journal, and holds the index outside the launcher process. Tick **Install the fast file indexer service** in the installer; it needs one admin prompt.
 
 You can also type `install indexer` into Heimdall. The service is called `HeimdallIndexer` and lives in `C:\Program Files\Heimdall`.
 
 ### Uninstall
 
-Run `uninstall.ps1` from the zip. It stops Heimdall, removes the autostart entry and the service, and deletes the program folder. Your settings stay in `%APPDATA%\Heimdall` until you delete that folder.
+Uninstall Heimdall from **Settings > Apps**. That stops it, removes the autostart entry and the indexer service, and deletes the program folder. Your settings stay in `%APPDATA%\Heimdall` until you delete that folder.
+
+### Without the installer
+
+The release also has `Heimdall-1.0.0-x64.zip`. Unzip it, then right-click `install.ps1` and choose **Run with PowerShell** (add `-Indexer` from a terminal to install the service too). `uninstall.ps1` removes it again.
 
 ## Using it
 
