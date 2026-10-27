@@ -286,13 +286,24 @@ const WIN_SETTINGS: &[(&str, &str, &str, char)] = &[
 /// Windows settings pages: a title match at substring strength, or a keyword
 /// match at word-prefix strength, so `re` doesn't flood the list.
 fn win_settings(q: &str, out: &mut Vec<Item>) {
+    // Two letters match half the titles somewhere and most keywords at a word
+    // start, so short queries only look at word starts in titles.
+    let short = q.chars().count() < 3;
+    let floor = if short { 600 } else { 450 };
     for &(title, target, keywords, glyph) in WIN_SETTINGS {
-        let t = fuzzy_words(q, &Target::new(title)).filter(|(s, _)| *s >= 450);
-        let k = keywords
-            .split(' ')
-            .filter_map(|w| fuzzy_words(q, &Target::new(w)).map(|(s, _)| s))
-            .max()
-            .filter(|s| *s >= 650);
+        let t = fuzzy_words(q, &Target::new(title)).filter(|(s, _)| *s >= floor);
+        // Every query word has to start one of the keywords: `dark mode`
+        // finds Colors through "dark" and "mode" separately.
+        let k = if short {
+            None
+        } else {
+            let kw: Vec<Target> = keywords.split(' ').map(Target::new).collect();
+            q.split_whitespace()
+                .map(|w| kw.iter().filter_map(|t| fuzzy_words(w, t).map(|(s, _)| s)).max().filter(|s| *s >= 650))
+                .collect::<Option<Vec<i32>>>()
+                .filter(|v| !v.is_empty())
+                .map(|v| v.iter().sum::<i32>() / v.len() as i32)
+        };
         let score = match (&t, k) {
             (Some((a, _)), Some(b)) => (*a).max(b),
             (Some((a, _)), None) => *a,
@@ -511,4 +522,26 @@ pub fn recent_items(paths: &[String]) -> Vec<Item> {
 pub fn completion(it: &Item) -> Option<String> {
     let p = it.path.as_ref()?;
     Some(if it.kind == Kind::Folder { format!("{}\\", p.trim_end_matches('\\')) } else { p.clone() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn titles(q: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        win_settings(q, &mut out);
+        out.into_iter().map(|i| i.title).collect()
+    }
+
+    #[test]
+    fn windows_settings_search() {
+        assert!(titles("dark mode").contains(&"Colors".to_string()));
+        assert!(titles("bluetooth").contains(&"Bluetooth & devices".to_string()));
+        assert!(titles("uninstall").contains(&"Installed apps".to_string()));
+        assert!(titles("display").contains(&"Display".to_string()));
+        assert!(titles("wallpaper").contains(&"Background".to_string()));
+        let re = titles("re");
+        assert!(re.len() < 6, "{re:?}");
+    }
 }
