@@ -124,6 +124,20 @@ fn stop(svc: &Sc) {
     }
 }
 
+/// The SCM reports a service stopped before its process has exited, so its
+/// executable stays locked for a moment. Retry `f` for up to 10 seconds.
+fn retry_while_locked(mut f: impl FnMut() -> io::Result<()>) -> io::Result<()> {
+    for _ in 0..100 {
+        match f() {
+            Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            r => return r,
+        }
+    }
+    f()
+}
+
 pub fn install() -> io::Result<String> {
     let scm = check(unsafe { OpenSCManagerW(null(), null(), SC_MANAGER_ALL_ACCESS) })?;
     let name = wide(SERVICE_NAME);
@@ -140,7 +154,13 @@ pub fn install() -> io::Result<String> {
     let target = dir.join("heimdall-indexer.exe");
     let me = std::env::current_exe()?;
     if me != target {
-        std::fs::copy(&me, &target)?;
+        if let Err(e) = retry_while_locked(|| std::fs::copy(&me, &target).map(drop)) {
+            // Don't leave the old service stopped because the upgrade failed.
+            if let Some(svc) = &existing {
+                unsafe { StartServiceW(svc.0, 0, null()) };
+            }
+            return Err(e);
+        }
     }
     let bin = wide(&format!("\"{}\"", target.display()));
     let display = wide("Heimdall Indexer");
@@ -207,7 +227,7 @@ pub fn uninstall() -> io::Result<String> {
     if unsafe { DeleteService(svc.0) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    std::fs::remove_file(install_dir().join("heimdall-indexer.exe")).ok();
+    retry_while_locked(|| std::fs::remove_file(install_dir().join("heimdall-indexer.exe"))).ok();
     std::fs::remove_dir_all(crate::data_dir()).ok();
     Ok("Heimdall Indexer removed.".into())
 }
