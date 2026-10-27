@@ -1,6 +1,7 @@
 //! Heimdall core: the file index, query language, ranking and IPC protocol
 //! shared by the launcher, the indexer service and the benchmark.
 
+pub mod b64;
 pub mod calc;
 pub mod index;
 pub mod ntfs;

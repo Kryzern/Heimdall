@@ -7,11 +7,12 @@ use crate::config::Config;
 use crate::items::*;
 use crate::items::Setting as S;
 use crate::platform::{self, pretty_path};
-use heimdall_core::{calc, Results};
+use heimdall_core::{b64, calc, Results};
 use windows::Win32::Foundation::HWND;
 
 pub const G_SEARCH: char = '\u{E721}';
 const G_CALC: char = '\u{E8EF}';
+const G_CODE: char = '\u{E943}';
 const G_GLOBE: char = '\u{E774}';
 const G_LOCK: char = '\u{E72E}';
 const G_SLEEP: char = '\u{E708}';
@@ -94,6 +95,24 @@ pub fn instant(q: &str, ctx: &Ctx, own: HWND) -> (Vec<Item>, bool) {
         Mode::Normal => {}
     }
     let q = q.trim();
+
+    // Base64: `b64 text` encodes, `b64d text` decodes.
+    if let Some((key, rest)) = q.split_once(' ') {
+        let rest = rest.trim();
+        let decode = key.eq_ignore_ascii_case("b64d");
+        if (decode || key.eq_ignore_ascii_case("b64")) && !rest.is_empty() {
+            let it = match decode.then(|| b64::decode_text(rest)) {
+                None => {
+                    let s = b64::encode(rest.as_bytes());
+                    Item::new(&s, "Base64 encoded  ·  Enter to copy", Kind::Base64, Icon::Glyph(G_CODE), Action::Copy(s.clone()))
+                }
+                Some(Some(s)) => Item::new(&s, "Base64 decoded  ·  Enter to copy", Kind::Base64, Icon::Glyph(G_CODE), Action::Copy(s.clone())),
+                Some(None) => Item::new("Not valid Base64 text", rest, Kind::Base64, Icon::Glyph(G_CODE), Action::Insert(q.to_string())),
+            };
+            out.push(it);
+            return (out, false);
+        }
+    }
 
     // Web prefix: `g rust lifetimes`.
     if let Some((key, rest)) = q.split_once(' ') {
@@ -333,6 +352,7 @@ fn tips() -> Vec<Item> {
         ("C:\\", "Browse folders by path; Tab completes a folder", G_TIP, "C:\\"),
         ("g rust lifetimes", "Search the web with a prefix: g, ddg, yt, gh, wiki", G_GLOBE, "g "),
         ("2 * (3 + 4)", "Calculator; Enter copies the answer", G_CALC, ""),
+        ("b64 hello", "Base64 encode; b64d decodes. Enter copies it", G_CODE, "b64 "),
     ];
     let mut out: Vec<Item> = rows
         .iter()
