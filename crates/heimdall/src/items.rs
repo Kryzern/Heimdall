@@ -10,6 +10,12 @@ pub enum Kind {
     System,
     Window,
     Command,
+    /// A page in Windows Settings or Control Panel.
+    WinSetting,
+    /// A row on Heimdall's own settings page.
+    Setting,
+    /// A query tip on the `?` page.
+    Tip,
 }
 
 impl Kind {
@@ -23,6 +29,9 @@ impl Kind {
             Kind::System => "System",
             Kind::Window => "Window",
             Kind::Command => "Heimdall",
+            Kind::WinSetting => "Settings",
+            Kind::Setting => "",
+            Kind::Tip => "Tip",
         }
     }
 }
@@ -50,10 +59,25 @@ pub enum SysCmd {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Internal {
     Quit,
+    Settings,
     EditConfig,
     ReloadIndex,
     InstallIndexer,
     ImportFlow,
+    Set(Setting),
+}
+
+/// Options on the settings page. Enter changes the selected one in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    Hotkey,
+    Autostart,
+    Tray,
+    Theme,
+    Glass,
+    Shadow,
+    Recent,
+    GameMode,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +89,8 @@ pub enum Action {
     System(SysCmd),
     Window(isize),
     Heimdall(Internal),
+    /// Replace the query (tips: `ext:` and friends).
+    Insert(String),
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +109,8 @@ pub struct Item {
     pub path: Option<String>,
     /// Needs a second Enter (restart, shut down, sign out).
     pub confirm: bool,
+    /// Shown on the right instead of the kind label (settings: "On", "Dark").
+    pub value: String,
 }
 
 impl Item {
@@ -99,6 +127,7 @@ impl Item {
             hl: Vec::new(),
             path: None,
             confirm: false,
+            value: String::new(),
         }
     }
 
@@ -112,7 +141,9 @@ impl Item {
             Action::Copy(_) => "Copy",
             Action::Window(_) => "Switch",
             Action::Url(_) => "Search",
+            Action::Heimdall(Internal::Set(_)) => "Change",
             Action::System(_) | Action::Heimdall(_) => "Run",
+            Action::Insert(_) => "Use",
             Action::Open(_) => match self.kind {
                 Kind::App => "Launch",
                 _ => "Open",

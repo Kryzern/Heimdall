@@ -8,6 +8,7 @@ use crate::files::FileSearch;
 use crate::gfx::{caret_x, layout_width, Color, GlassParams, Gfx, Rect};
 use crate::history::History;
 use crate::items::*;
+use crate::menu::{self, Menu, Tray};
 use crate::platform;
 use crate::shell::{Done, Job, Preview, Worker};
 use crate::sources::{self, Ctx, Mode};
@@ -33,6 +34,46 @@ const HEADER: f32 = 26.0;
 const PREVIEW: f32 = 340.0;
 const RADIUS: f32 = 22.0;
 const ICON: f32 = 30.0;
+const MENU_W: f32 = 268.0;
+const MENU_ROW: f32 = 34.0;
+const MENU_SEP: f32 = 9.0;
+const MENU_PAD: f32 = 6.0;
+
+const G_OPEN: char = '\u{E8A7}';
+const G_ADMIN: char = '\u{E7EF}';
+const G_FOLDER: char = '\u{E838}';
+const G_OPEN_WITH: char = '\u{E7AC}';
+const G_COPY: char = '\u{E8C8}';
+const G_INFO: char = '\u{E946}';
+const G_CLOSE: char = '\u{E8BB}';
+
+/// Things the action menu can do to a result.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Act {
+    Open,
+    Admin,
+    Location,
+    OpenWith,
+    CopyPath,
+    Properties,
+    Close,
+}
+
+/// (action, glyph, label, shortcut hint)
+type MenuRow = (Act, char, &'static str, &'static str);
+
+/// The right-click menu. `None` rows are separators.
+struct ActionMenu {
+    rows: Vec<Option<MenuRow>>,
+    sel: usize,
+    x: f32,
+    y: f32,
+    item: Item,
+}
+
+fn menu_height(rows: &[Option<MenuRow>]) -> f32 {
+    2.0 * MENU_PAD + rows.iter().map(|r| if r.is_some() { MENU_ROW } else { MENU_SEP }).sum::<f32>()
+}
 
 struct Spring {
     x: f32,
@@ -192,6 +233,16 @@ pub struct App {
     mouse_last: (i32, i32),
     press: Option<(i32, i32, usize)>,
     dragging: bool,
+
+    /// Showing Heimdall's settings page instead of search results.
+    settings_page: bool,
+    /// Waiting for the user to press a new hotkey.
+    recording: bool,
+    /// Shown under the hotkey row (e.g. "Ctrl+K is already used").
+    notice: Option<String>,
+    tray: Tray,
+    menu: Option<ActionMenu>,
+    menu_fade: Spring,
 }
 
 fn icon_key(p: &str) -> String {
@@ -268,10 +319,17 @@ impl App {
             mouse_last: (i32::MIN, i32::MIN),
             press: None,
             dragging: false,
+            settings_page: false,
+            recording: false,
+            notice: None,
+            tray: Tray::new(hwnd),
+            menu: None,
+            menu_fade: Spring::new(0.0, 900.0, 1.0),
             cfg,
             loader,
         };
         app.set_hotkey(true);
+        app.sync_tray();
         app
     }
 
@@ -299,6 +357,17 @@ impl App {
                 self.hotkey_registered = false;
             }
         }
+    }
+
+    fn sync_tray(&mut self) {
+        let tip = format!("Heimdall ({})", self.cfg.hotkey);
+        self.tray.set(self.cfg.tray, &tip);
+    }
+
+    /// Remove the tray icon before exiting so it doesn't linger until hovered.
+    pub fn shutdown(&mut self) {
+        self.hide();
+        self.tray.set(false, "");
     }
 
     fn rebind_hotkey(&mut self) {
@@ -340,6 +409,7 @@ impl App {
             if hotkey_changed {
                 self.rebind_hotkey();
             }
+            self.sync_tray();
         }
         self.theme = Theme::new(&self.cfg);
         if self.gfx.is_none() {
@@ -418,6 +488,10 @@ impl App {
         self.preview = None;
         self.preview_req = None;
         self.history.save();
+        self.settings_page = false;
+        self.recording = false;
+        self.notice = None;
+        self.menu = None;
         if !self.hotkey_wanted {
             self.set_hotkey(true);
         }
@@ -431,9 +505,18 @@ impl App {
 
     fn refresh(&mut self) {
         self.qid += 1;
+        self.menu = None;
         self.confirm_key = None;
         self.user_moved = false;
         let q = self.edit.text.clone();
+        if self.settings_page {
+            self.mode = Mode::Settings;
+            self.instant_rows = sources::settings(&q, &self.cfg, self.recording, self.notice.as_deref());
+            self.file_rows.clear();
+            self.files_pending = false;
+            self.merge(true);
+            return;
+        }
         self.mode = sources::mode(&q);
         let ctx = Ctx { apps: &self.apps, cfg: &self.cfg, service: self.files.status.service.load(Ordering::Relaxed) };
         let (items, want_files) = sources::instant(&q, &ctx, self.hwnd);
@@ -567,7 +650,7 @@ impl App {
     }
 
     fn header_h(&self) -> f32 {
-        if self.mode == Mode::Recent && !self.items.is_empty() {
+        if matches!(self.mode, Mode::Recent | Mode::Settings | Mode::Help) && !self.items.is_empty() {
             HEADER
         } else {
             0.0
@@ -700,6 +783,11 @@ impl App {
             }
             Action::Window(h) => actions::switch_to(*h),
             Action::Heimdall(cmd) => hide = self.internal(*cmd),
+            Action::Insert(s) => {
+                self.edit.set(s);
+                self.refresh();
+                return;
+            }
         }
         if !matches!(it.action, Action::Window(_) | Action::Heimdall(_)) {
             self.history.record(&q, &it);
@@ -735,6 +823,14 @@ impl App {
                     }
                 }
             }
+            Internal::Settings => {
+                self.open_settings();
+                return false;
+            }
+            Internal::Set(s) => {
+                self.change(s);
+                return false;
+            }
             Internal::ReloadIndex => self.files.rebuild(),
             Internal::InstallIndexer => {
                 if let Ok(exe) = std::env::current_exe() {
@@ -763,11 +859,352 @@ impl App {
         true
     }
 
+    // ---- settings ----------------------------------------------------------
+
+    fn open_settings(&mut self) {
+        if !self.visible {
+            self.show();
+        }
+        self.settings_page = true;
+        self.notice = None;
+        self.edit.clear();
+        self.refresh();
+    }
+
+    fn save_config(&mut self) {
+        config::save(&self.cfg);
+        // Take the new timestamp now so the next open doesn't reload it.
+        self.loader.poll();
+    }
+
+    /// Keep the selection on the same row after the list is rebuilt.
+    fn select_key(&mut self, key: Option<String>) {
+        if let Some(i) = key.and_then(|k| self.items.iter().position(|it| it.key == k)) {
+            self.sel = i;
+            self.ensure_visible();
+            self.sel_y.snap(self.sel_target());
+            self.kick();
+        }
+    }
+
+    fn change(&mut self, s: Setting) {
+        fn cycle(v: &mut String, opts: &[&str]) {
+            let i = opts.iter().position(|o| o.eq_ignore_ascii_case(v)).map_or(0, |i| (i + 1) % opts.len());
+            *v = opts[i].to_string();
+        }
+        let key = self.items.get(self.sel).map(|i| i.key.clone());
+        let c = &mut self.cfg;
+        match s {
+            Setting::Hotkey => {
+                self.recording = true;
+                self.notice = None;
+                // Unregister so pressing the current hotkey arrives here as keys.
+                self.set_hotkey(false);
+            }
+            Setting::Autostart => {
+                c.start_with_windows = !c.start_with_windows;
+                platform::set_autostart(c.start_with_windows);
+            }
+            Setting::Tray => c.tray = !c.tray,
+            Setting::Theme => cycle(&mut c.theme, &["system", "dark", "light"]),
+            Setting::Glass => cycle(&mut c.glass, &["liquid", "auto", "solid"]),
+            Setting::Shadow => cycle(&mut c.shadow, &["normal", "soft", "off"]),
+            Setting::Recent => c.show_recent = !c.show_recent,
+            Setting::GameMode => c.game_mode = !c.game_mode,
+        }
+        if s != Setting::Hotkey {
+            self.save_config();
+            self.sync_tray();
+        }
+        self.theme = Theme::new(&self.cfg);
+        self.refresh();
+        self.select_key(key);
+    }
+
+    /// A key arrived while recording a new hotkey.
+    fn record_key(&mut self, vk: u16) {
+        let k = VIRTUAL_KEY(vk);
+        if matches!(k, VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN | VK_LSHIFT | VK_RSHIFT | VK_LCONTROL | VK_RCONTROL | VK_LMENU | VK_RMENU) {
+            return;
+        }
+        let down = |k: VIRTUAL_KEY| unsafe { GetKeyState(k.0 as i32) } < 0;
+        let mods = down(VK_MENU) as u32
+            | (down(VK_CONTROL) as u32) << 1
+            | (down(VK_SHIFT) as u32) << 2
+            | ((down(VK_LWIN) || down(VK_RWIN)) as u32) << 3;
+        // Keys that also produce a WM_CHAR: don't let it land in the search box.
+        self.eat_char = mods & 3 == 0 && matches!(vk, 0x09 | 0x0D | 0x1B | 0x20 | 0x30..=0x5A | 0xBA..=0xC0 | 0xDB..=0xDF);
+        let key = self.items.get(self.sel).map(|i| i.key.clone());
+        if k == VK_ESCAPE && mods == 0 {
+            self.recording = false;
+            self.notice = None;
+            self.set_hotkey(true);
+        } else if let Some(name) = config::hotkey_name(mods, vk as u32) {
+            self.recording = false;
+            let old = std::mem::replace(&mut self.cfg.hotkey, name.clone());
+            self.set_hotkey(true);
+            if self.hotkey_registered {
+                self.notice = None;
+                self.save_config();
+                self.sync_tray();
+            } else {
+                self.cfg.hotkey = old;
+                self.set_hotkey(true);
+                self.notice = Some(format!("{name} is already used by another app. Press Enter to try another."));
+            }
+        } else {
+            self.notice = Some("Add Ctrl, Alt, Shift or Win to that key.".into());
+        }
+        self.refresh();
+        self.select_key(key);
+    }
+
+    // ---- action menu -------------------------------------------------------
+
+    /// Right-click on a row, Shift+F10 or the menu key. `at` is a screen point,
+    /// or None to open under the selected row. The menu is drawn inside the
+    /// window in Heimdall's own style, not as a native popup.
+    fn context_menu(&mut self, at: Option<(i32, i32)>) {
+        let anchor = match at {
+            Some((sx, sy)) => {
+                let (x, y) = ((sx - self.win.0) as f32 / self.scale, (sy - self.win.1) as f32 / self.scale);
+                match self.row_at(x, y) {
+                    Some(r) => self.set_sel(r),
+                    None => return,
+                }
+                (x, y)
+            }
+            None => {
+                let y = self.list_top() + (self.sel.saturating_sub(self.scroll) + 1) as f32 * ROW;
+                (M + self.panel_w() - MENU_W - 12.0, y - 6.0)
+            }
+        };
+        let Some(it) = self.items.get(self.sel).cloned() else { return };
+        let mut rows: Vec<Option<MenuRow>> = Vec::new();
+        match &it.action {
+            Action::Window(_) => {
+                rows.push(Some((Act::Open, G_OPEN, "Switch to", "\u{21B5}")));
+                rows.push(Some((Act::Close, G_CLOSE, "Close window", "")));
+            }
+            Action::Open(target) => {
+                rows.push(Some((Act::Open, G_OPEN, if it.kind == Kind::App { "Launch" } else { "Open" }, "\u{21B5}")));
+                let ext = it.path.as_deref().unwrap_or(target).rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+                if it.kind == Kind::App || matches!(ext.as_deref(), Some("exe" | "lnk" | "bat" | "cmd" | "msi" | "msc")) {
+                    rows.push(Some((Act::Admin, G_ADMIN, "Run as administrator", "Ctrl+Shift+\u{21B5}")));
+                }
+                if it.path.is_some() {
+                    rows.push(Some((Act::Location, G_FOLDER, "Open file location", "Ctrl+\u{21B5}")));
+                }
+                if it.kind == Kind::File {
+                    rows.push(Some((Act::OpenWith, G_OPEN_WITH, "Open with\u{2026}", "")));
+                }
+                if it.path.is_some() {
+                    rows.push(None);
+                    rows.push(Some((Act::CopyPath, G_COPY, "Copy path", "Ctrl+C")));
+                    rows.push(Some((Act::Properties, G_INFO, "Properties", "Alt+\u{21B5}")));
+                }
+            }
+            _ => return,
+        }
+        let h = menu_height(&rows);
+        let win_h = self.win.3 as f32 / self.scale;
+        let x = anchor.0.min(M + self.panel_w() - MENU_W - 8.0).max(M + 8.0);
+        let y = if anchor.1 + h > win_h - M + 20.0 { (anchor.1 - h).max(M) } else { anchor.1 };
+        self.menu = Some(ActionMenu { rows, sel: 0, x, y, item: it });
+        self.menu_fade.snap(0.0);
+        self.menu_fade.target = 1.0;
+        self.kick();
+    }
+
+    fn close_menu(&mut self) {
+        if self.menu.take().is_some() {
+            self.kick();
+        }
+    }
+
+    fn menu_rect(&self) -> Option<Rect> {
+        self.menu.as_ref().map(|m| Rect::new(m.x, m.y, MENU_W, menu_height(&m.rows)))
+    }
+
+    /// Index of the action row under a point.
+    fn menu_row_at(&self, x: f32, y: f32) -> Option<usize> {
+        let m = self.menu.as_ref()?;
+        if !self.menu_rect()?.contains(x, y) {
+            return None;
+        }
+        let mut top = m.y + MENU_PAD;
+        for (i, r) in m.rows.iter().enumerate() {
+            let h = if r.is_some() { MENU_ROW } else { MENU_SEP };
+            if y >= top && y < top + h {
+                return r.is_some().then_some(i);
+            }
+            top += h;
+        }
+        None
+    }
+
+    fn menu_move(&mut self, down: bool) {
+        let Some(m) = self.menu.as_mut() else { return };
+        let n = m.rows.len();
+        let mut i = m.sel;
+        for _ in 0..n {
+            i = if down { (i + 1) % n } else { (i + n - 1) % n };
+            if m.rows[i].is_some() {
+                m.sel = i;
+                break;
+            }
+        }
+        self.kick();
+    }
+
+    fn menu_run(&mut self, i: usize) {
+        let Some(m) = self.menu.take() else { return };
+        if let Some(Some((act, ..))) = m.rows.get(i) {
+            self.run_act(*act, &m.item);
+        }
+        self.kick();
+    }
+
+    fn run_act(&mut self, act: Act, it: &Item) {
+        let q = self.edit.text.clone();
+        let path = it.path.clone();
+        let target = path.clone().or_else(|| if let Action::Open(t) = &it.action { Some(t.clone()) } else { None });
+        match act {
+            Act::Open => {
+                if let Some(i) = self.items.iter().position(|x| x.key == it.key && x.title == it.title) {
+                    self.sel = i;
+                }
+                self.activate(false, false);
+            }
+            Act::Admin => {
+                if let Some(t) = &target {
+                    actions::open(t, true);
+                    self.history.record(&q, it);
+                    self.hide();
+                }
+            }
+            Act::Location => {
+                if let Some(p) = &path {
+                    actions::reveal(p);
+                    self.hide();
+                }
+            }
+            Act::OpenWith => {
+                if let Some(p) = &path {
+                    self.hide();
+                    menu::open_with(p);
+                }
+            }
+            Act::CopyPath => {
+                if let Some(p) = &path {
+                    actions::copy_text(self.hwnd, p);
+                }
+            }
+            Act::Properties => {
+                if let Some(p) = &path {
+                    self.hide();
+                    menu::properties(p);
+                }
+            }
+            Act::Close => {
+                if let Action::Window(h) = it.action {
+                    unsafe { PostMessageW(Some(HWND(h as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0)).ok() };
+                    self.instant_rows.retain(|r| !matches!(r.action, Action::Window(x) if x == h));
+                    self.merge(false);
+                }
+            }
+        }
+    }
+
+    fn draw_menu(&self, g: &Gfx) {
+        let (Some(m), Some(r)) = (&self.menu, self.menu_rect()) else { return };
+        let th = &self.theme;
+        let t = self.menu_fade.x.clamp(0.0, 1.0);
+        g.push_opacity(t);
+        let r = Rect::new(r.x, r.y - (1.0 - t) * 6.0, r.w, r.h);
+        let black = Color::rgba(0.0, 0.0, 0.0, 1.0);
+        let white = Color::rgba(1.0, 1.0, 1.0, 1.0);
+        // A soft shadow from a few widening layers.
+        for (grow, a) in [(14.0, 0.025), (9.0, 0.04), (5.0, 0.06), (2.0, 0.08)] {
+            let a = if th.dark { a * 2.2 } else { a };
+            g.fill_round(Rect::new(r.x - grow, r.y - grow + 6.0, r.w + 2.0 * grow, r.h + 2.0 * grow), 14.0 + grow, black.alpha(a));
+        }
+        let (bg, rim, hover) = if th.dark {
+            (Color::rgba(0.115, 0.12, 0.137, 0.97), white.alpha(0.11), white.alpha(0.085))
+        } else {
+            (Color::rgba(0.992, 0.992, 0.996, 0.98), black.alpha(0.09), black.alpha(0.055))
+        };
+        g.fill_round(r, 13.0, bg);
+        g.stroke_round(r, 13.0, rim);
+        let mut y = r.y + MENU_PAD;
+        for (i, row) in m.rows.iter().enumerate() {
+            let Some((_, glyph, label, hint)) = row else {
+                g.hline(r.x + 14.0, r.x + r.w - 14.0, y + MENU_SEP / 2.0, th.line);
+                y += MENU_SEP;
+                continue;
+            };
+            let selected = i == m.sel;
+            if selected {
+                g.fill_round(Rect::new(r.x + 6.0, y, r.w - 12.0, MENU_ROW), 8.0, hover);
+            }
+            g.text(&glyph.to_string(), &g.fonts.menu_glyph, Rect::new(r.x + 12.0, y, 26.0, MENU_ROW), if selected { th.text } else { th.sub });
+            g.text(label, &g.fonts.menu, Rect::new(r.x + 44.0, y, r.w - 44.0 - 96.0, MENU_ROW), th.text);
+            g.text(hint, &g.fonts.hint, Rect::new(r.x + r.w - 14.0 - 96.0, y, 96.0, MENU_ROW), th.faint);
+            y += MENU_ROW;
+        }
+        g.pop_layer();
+    }
+
+    fn tray_menu(&mut self) {
+        let Some(m) = Menu::new() else { return };
+        m.item(1, &format!("Open Heimdall\t{}", self.cfg.hotkey));
+        m.item(2, "Settings");
+        m.sep();
+        m.check(3, "Start with Windows", self.cfg.start_with_windows);
+        m.sep();
+        m.item(4, "Quit Heimdall");
+        let mut pt = POINT::default();
+        unsafe { GetCursorPos(&mut pt).ok() };
+        match m.show(self.hwnd, pt.x, pt.y, self.theme.dark) {
+            1 => self.show(),
+            2 => self.open_settings(),
+            3 => {
+                self.cfg.start_with_windows = !self.cfg.start_with_windows;
+                platform::set_autostart(self.cfg.start_with_windows);
+                self.save_config();
+            }
+            4 => {
+                self.internal(Internal::Quit);
+            }
+            _ => {}
+        }
+    }
+
     // ---- input -------------------------------------------------------------
 
     fn key_down(&mut self, vk: u16) -> bool {
         let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+        if let Some(sel) = self.menu.as_ref().map(|m| m.sel) {
+            match VIRTUAL_KEY(vk) {
+                VK_UP => self.menu_move(false),
+                VK_DOWN | VK_TAB => self.menu_move(true),
+                VK_RETURN => {
+                    self.eat_char = true;
+                    self.menu_run(sel);
+                }
+                VK_ESCAPE | VK_APPS => {
+                    self.eat_char = vk == VK_ESCAPE.0;
+                    self.close_menu();
+                }
+                _ => {
+                    // Anything else goes back to the search box.
+                    self.close_menu();
+                    return self.key_down(vk);
+                }
+            }
+            return true;
+        }
         let before = self.edit.text.clone();
         match VIRTUAL_KEY(vk) {
             VK_ESCAPE => {
@@ -775,6 +1212,12 @@ impl App {
                     self.toggle_preview();
                 } else if !self.edit.text.is_empty() && !self.edit.all {
                     self.edit.clear();
+                } else if self.settings_page {
+                    self.settings_page = false;
+                    self.notice = None;
+                    self.edit.clear();
+                    self.refresh();
+                    return true;
                 } else {
                     self.hide();
                     return true;
@@ -849,6 +1292,7 @@ impl App {
         if std::mem::take(&mut self.eat_char) {
             return;
         }
+        self.menu = None;
         if c.is_control() {
             return;
         }
@@ -874,6 +1318,17 @@ impl App {
             return;
         }
         self.mouse_last = (px, py);
+        if self.menu.is_some() {
+            if let Some(i) = self.menu_row_at(x, y) {
+                if let Some(m) = self.menu.as_mut() {
+                    if m.sel != i {
+                        m.sel = i;
+                        self.kick();
+                    }
+                }
+            }
+            return;
+        }
         if let Some((sx, sy, row)) = self.press {
             if buttons & 1 != 0 && ((px - sx).abs() > 6 || (py - sy).abs() > 6) {
                 self.press = None;
@@ -893,6 +1348,13 @@ impl App {
 
     fn mouse_down(&mut self, lp: LPARAM) {
         let (x, y, px, py) = self.dip(lp);
+        if let Some(r) = self.menu_rect() {
+            // Clicks inside run on release; a click anywhere else just closes it.
+            if !r.contains(x, y) {
+                self.close_menu();
+            }
+            return;
+        }
         if !self.shape_rect().contains(x, y) {
             self.hide();
             return;
@@ -907,6 +1369,12 @@ impl App {
     fn mouse_up(&mut self, lp: LPARAM) {
         unsafe { ReleaseCapture().ok() };
         let (x, y, _, _) = self.dip(lp);
+        if self.menu.is_some() {
+            if let Some(i) = self.menu_row_at(x, y) {
+                self.menu_run(i);
+            }
+            return;
+        }
         if let Some((_, _, row)) = self.press.take() {
             if self.row_at(x, y) == Some(row) {
                 self.activate(false, false);
@@ -915,6 +1383,7 @@ impl App {
     }
 
     fn wheel(&mut self, wp: WPARAM) {
+        self.close_menu();
         let delta = ((wp.0 >> 16) & 0xFFFF) as i16 as i32;
         let steps = -delta / 120;
         if steps > 0 {
@@ -944,7 +1413,7 @@ impl App {
         let now = Instant::now();
         let dt = self.anim_last.map(|t| (now - t).as_secs_f32()).unwrap_or(1.0 / 120.0).min(1.0 / 30.0);
         let mut moving = false;
-        for s in [&mut self.height, &mut self.sel_y, &mut self.opacity, &mut self.zoom, &mut self.pw] {
+        for s in [&mut self.height, &mut self.sel_y, &mut self.opacity, &mut self.zoom, &mut self.pw, &mut self.menu_fade] {
             moving |= s.step(dt);
         }
         self.render();
@@ -984,7 +1453,7 @@ impl App {
         let tint = match (th.dark, th.glass) {
             (true, true) => [0.06, 0.065, 0.08, 0.30],
             (true, false) => [0.115, 0.12, 0.135, 1.0],
-            (false, true) => [0.975, 0.975, 0.985, 0.30],
+            (false, true) => [0.985, 0.985, 0.99, 0.12],
             (false, false) => [0.955, 0.957, 0.965, 1.0],
         };
         let has_backdrop = gfx.has_backdrop();
@@ -1004,6 +1473,11 @@ impl App {
             lens: 26.0,
             back_size: [self.win.2 as f32, self.win.3 as f32],
             blur_lod: 4.6 + s.log2(),
+            shadow: match self.cfg.shadow.as_str() {
+                "off" => 0.0,
+                "soft" => 0.45,
+                _ => 1.0,
+            },
             ..Default::default()
         };
         let mut missing: Vec<(String, String)> = Vec::new();
@@ -1041,7 +1515,8 @@ impl App {
         let tx = M + 52.0;
         let tw = w - 52.0 - 110.0;
         if self.edit.text.is_empty() {
-            g.text("Search apps, files and more", &g.fonts.query, Rect::new(tx, M, tw, BAR), th.faint);
+            let placeholder = if self.settings_page { "Filter settings" } else { "Search apps, files and settings" };
+            g.text(placeholder, &g.fonts.query, Rect::new(tx, M, tw, BAR), th.faint);
             if self.caret_on {
                 g.fill(Rect::new(tx, M + BAR / 2.0 - 12.0, 1.5, 24.0), th.accent);
             }
@@ -1059,7 +1534,10 @@ impl App {
         let status = match self.mode {
             Mode::Windows => "Windows",
             Mode::Path => "Browse",
+            Mode::Settings => "Settings",
+            Mode::Help => "Tips",
             _ if !self.files.ready() => "Indexing\u{2026}",
+            Mode::Recent => "? for tips",
             _ => "",
         };
         g.text(status, &g.fonts.hint, Rect::new(M + w - 130.0, M, 112.0, BAR), th.faint);
@@ -1068,7 +1546,12 @@ impl App {
         if n > 0 {
             g.hline(M + 16.0, M + w - 16.0, M + BAR, th.line);
             if self.header_h() > 0.0 {
-                g.text("RECENT", &g.fonts.header, Rect::new(M + 22.0, M + BAR + PAD, 200.0, HEADER), th.faint);
+                let header = match self.mode {
+                    Mode::Settings => "SETTINGS",
+                    Mode::Help => "TIPS",
+                    _ => "RECENT",
+                };
+                g.text(header, &g.fonts.header, Rect::new(M + 22.0, M + BAR + PAD, 200.0, HEADER), th.faint);
             }
             let top = self.list_top();
             for vi in 0..n {
@@ -1083,6 +1566,7 @@ impl App {
         }
 
         g.pop_clip();
+        self.draw_menu(g);
         g.reset_transform();
         if fade {
             g.pop_layer();
@@ -1129,8 +1613,13 @@ impl App {
             let c = if confirming { th.accent } else { th.sub };
             g.text(&subtitle, &g.fonts.subtitle, Rect::new(x, y + 25.0, title_w, 17.0), c);
         }
-        let hint = if selected { format!("{}  \u{21B5}", it.verb()) } else { it.kind.label().to_string() };
-        g.text(&hint, &g.fonts.hint, Rect::new(M + w - 18.0 - hint_w, y, hint_w, ROW), if selected { th.sub } else { th.faint });
+        let (hint, colour) = match (it.value.is_empty(), selected) {
+            (false, true) => (format!("{}  \u{21B5}", it.value), th.text),
+            (false, false) => (it.value.clone(), th.sub),
+            (true, true) => (format!("{}  \u{21B5}", it.verb()), th.sub),
+            (true, false) => (it.kind.label().to_string(), th.faint),
+        };
+        g.text(&hint, &g.fonts.hint, Rect::new(M + w - 18.0 - hint_w, y, hint_w, ROW), colour);
     }
 
     fn draw_preview(&self, g: &Gfx, x0: f32, h: f32) {
@@ -1218,6 +1707,22 @@ impl App {
     fn dispatch(&mut self, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         match msg {
             WM_HOTKEY => self.toggle(),
+            WM_KEYDOWN | WM_SYSKEYDOWN if self.recording => self.record_key(wp.0 as u16),
+            // No window menu and no beep for Alt+letter.
+            WM_SYSCHAR => {}
+            WM_CONTEXTMENU => {
+                let at = (lp.0 != -1).then(|| ((lp.0 & 0xFFFF) as i16 as i32, ((lp.0 >> 16) & 0xFFFF) as i16 as i32));
+                self.context_menu(at);
+            }
+            menu::WM_APP_TRAY => match (lp.0 & 0xFFFF) as u32 {
+                WM_LBUTTONUP => self.show(),
+                WM_RBUTTONUP => self.tray_menu(),
+                _ => {}
+            },
+            m if m == self.tray.taskbar_created => {
+                let tip = format!("Heimdall ({})", self.cfg.hotkey);
+                self.tray.readd(self.cfg.tray, &tip);
+            }
             WM_APP_SHOW => {
                 if !self.visible {
                     self.show();
@@ -1231,6 +1736,12 @@ impl App {
                 }
             }
             WM_SYSKEYDOWN if wp.0 as u16 == VK_F4.0 => self.hide(),
+            WM_SYSKEYDOWN if wp.0 as u16 == VK_RETURN.0 => {
+                if let Some(it) = self.items.get(self.sel).cloned() {
+                    self.close_menu();
+                    self.run_act(Act::Properties, &it);
+                }
+            }
             WM_CHAR => {
                 if let Some(c) = char::from_u32(wp.0 as u32) {
                     self.char_in(c);

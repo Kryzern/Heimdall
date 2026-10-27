@@ -12,6 +12,7 @@ mod flow;
 mod gfx;
 mod history;
 mod items;
+mod menu;
 mod platform;
 mod shell;
 mod sources;
@@ -180,6 +181,6 @@ fn main() {
                 }
             }
         }
-        with_app(|app| app.hide());
+        with_app(|app| app.shutdown());
     }
 }

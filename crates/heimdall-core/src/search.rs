@@ -66,26 +66,6 @@ impl Searcher {
             return Results::default();
         }
 
-        let cands = match q.tokens.len() {
-            0 => Arc::new(vols.par_iter().map(all_live).collect()),
-            1 => self.candidates(vols, &q.tokens[0]),
-            // `heimdall report`: either word may live in the folder path rather
-            // than the name, so take the union and let stage 2 check the rest.
-            _ => {
-                let finders: Vec<Finder<'_>> = q.tokens.iter().map(|t| Finder::new(t)).collect();
-                Arc::new(
-                    vols.par_iter()
-                        .map(|v| {
-                            let mut all: Vec<u32> = finders.iter().flat_map(|f| scan(v, f)).collect();
-                            all.sort_unstable();
-                            all.dedup();
-                            all
-                        })
-                        .collect(),
-                )
-            }
-        };
-
         let within: Vec<Vec<HashSet<u32>>> = if q.within.is_empty() {
             Vec::new()
         } else {
@@ -95,30 +75,48 @@ impl Searcher {
         let finders: Vec<Finder<'_>> = q.tokens.iter().map(|t| Finder::new(t)).collect();
         // Results that still need a path check or metadata get a deeper pool.
         let keep = if q.needs_metadata() || q.tokens.len() > 1 { 4096 } else { 384 }.max(limit * 4);
-        // Score in parallel chunks; each chunk keeps only its own top `keep`,
-        // so a one-letter query never materialises millions of scored rows.
-        let (mut total, mut scored) = cands
-            .par_iter()
-            .enumerate()
-            .map(|(vi, list)| {
-                let v = &vols[vi];
-                let within = within.get(vi);
-                list.par_chunks(16_384)
-                    .map(|chunk| {
-                        let mut out: Vec<Scored> = chunk
-                            .iter()
-                            .filter_map(|&i| {
-                                stage1(v, i, q, &finders, within)
-                                    .map(|(score, pending)| Scored { score, vol: vi as u16, pending, ent: i })
-                            })
-                            .collect();
-                        let n = out.len() as u64;
-                        top_k(&mut out, keep);
-                        (n, out)
-                    })
-                    .reduce(|| (0, Vec::new()), merge)
-            })
-            .reduce(|| (0, Vec::new()), merge);
+
+        let (mut total, mut scored) = if q.tokens.len() == 1 && q.tokens[0].len() <= 2 {
+            fused(vols, q, &finders, &within, keep)
+        } else {
+            let cands = match q.tokens.len() {
+                0 => Arc::new(vols.par_iter().map(all_live).collect()),
+                1 => self.candidates(vols, &q.tokens[0]),
+                // `heimdall report`: either word may live in the folder path rather
+                // than the name, so take the union and let stage 2 check the rest.
+                _ => Arc::new(
+                    vols.par_iter()
+                        .map(|v| {
+                            let mut all: Vec<u32> = finders.iter().flat_map(|f| scan(v, f)).collect();
+                            all.sort_unstable();
+                            all.dedup();
+                            all
+                        })
+                        .collect(),
+                ),
+            };
+            // Score in parallel chunks; each chunk keeps only its own top `keep`,
+            // so a broad query never materialises millions of scored rows.
+            cands
+                .par_iter()
+                .enumerate()
+                .map(|(vi, list)| {
+                    let v = &vols[vi];
+                    let within = within.get(vi);
+                    list.par_chunks(16_384)
+                        .map(|chunk| {
+                            let mut top = TopK::new(keep);
+                            for &i in chunk {
+                                if let Some((score, pending)) = stage1(v, i, q, &finders, within, top.floor) {
+                                    top.push(Scored { score, vol: vi as u16, pending, ent: i });
+                                }
+                            }
+                            top.finish()
+                        })
+                        .reduce(|| (0, Vec::new()), merge)
+                })
+                .reduce(|| (0, Vec::new()), merge)
+        };
 
         if scored.is_empty() && q.tokens.len() == 1 && q.tokens[0].len() >= 3 && q.within.is_empty() {
             scored = fuzzy(vols, &q.tokens[0], q);
@@ -232,6 +230,87 @@ fn scan(v: &Volume, f: &Finder<'_>) -> Vec<u32> {
     parts.concat()
 }
 
+/// One- and two-letter queries match most of the index, so a candidate list
+/// would hold millions of entries only to be matched a second time. Instead,
+/// walk the entries in order and score each one in the same pass.
+fn fused(
+    vols: &[Volume],
+    q: &Query,
+    finders: &[Finder<'_>],
+    within: &[Vec<HashSet<u32>>],
+    keep: usize,
+) -> (u64, Vec<Scored>) {
+    vols.par_iter()
+        .enumerate()
+        .map(|(vi, v)| {
+            let n = v.entries.len() as u32;
+            let within = within.get(vi);
+            // Without a candidate list, an entry whose name matches no token
+            // at all would come back from stage 1 with every token pending.
+            let none = ((1u16 << q.tokens.len().min(8)) - 1) as u8;
+            (0..n.div_ceil(32_768))
+                .into_par_iter()
+                .map(|c| {
+                    let mut top = TopK::new(keep);
+                    let range = c * 32_768..((c + 1) * 32_768).min(n);
+                    if let ([t], [f], None) = (q.tokens.as_slice(), finders, within) {
+                        for i in range {
+                            if let Some(score) = stage1_one(v, i, q, t, f, top.floor) {
+                                top.push(Scored { score, vol: vi as u16, pending: 0, ent: i });
+                            }
+                        }
+                    } else {
+                        for i in range {
+                            if let Some((score, pending)) = stage1(v, i, q, finders, within, top.floor) {
+                                if pending != none {
+                                    top.push(Scored { score, vol: vi as u16, pending, ent: i });
+                                }
+                            }
+                        }
+                    }
+                    top.finish()
+                })
+                .reduce(|| (0, Vec::new()), merge)
+        })
+        .reduce(|| (0, Vec::new()), merge)
+}
+
+/// Keeps the best `k` rows of a stream without storing the rest: rows are
+/// buffered up to 2k, then cut back to k, and anything at or below the k-th best
+/// score seen so far is dropped on arrival.
+struct TopK {
+    k: usize,
+    seen: u64,
+    floor: i32,
+    rows: Vec<Scored>,
+}
+
+impl TopK {
+    fn new(k: usize) -> Self {
+        TopK { k, seen: 0, floor: i32::MIN, rows: Vec::with_capacity(k * 2) }
+    }
+
+    #[inline]
+    fn push(&mut self, s: Scored) {
+        self.seen += 1;
+        // Ties at the floor can't improve the set; letting them in would
+        // re-select every k rows when millions of names share a score.
+        if s.score <= self.floor {
+            return;
+        }
+        self.rows.push(s);
+        if self.rows.len() >= self.k * 2 {
+            top_k(&mut self.rows, self.k);
+            self.floor = self.rows.iter().map(|r| r.score).min().unwrap_or(i32::MIN);
+        }
+    }
+
+    fn finish(mut self) -> (u64, Vec<Scored>) {
+        top_k(&mut self.rows, self.k);
+        (self.seen, self.rows)
+    }
+}
+
 fn all_live(v: &Volume) -> Vec<u32> {
     (0..v.entries.len() as u32).filter(|&i| v.entries[i as usize].flags & DELETED == 0).collect()
 }
@@ -250,21 +329,27 @@ fn is_boundary(b: u8) -> bool {
     matches!(b, b' ' | b'_' | b'-' | b'.' | b'(' | b'[' | b'+' | b',' | b'@' | b'#' | b'&' | b'\'')
 }
 
+/// Score one token found at `p` in a folded name. The second value is true
+/// when the score could rise by `CAMEL` if the original name has a camelCase
+/// boundary at `p`; checking that means reading the other arena, so the caller
+/// only does it for rows that can still make the cut.
 #[inline]
-fn token_score(orig: &[u8], name: &[u8], tok: &[u8], p: usize) -> i32 {
-    let mut s = if p == 0 {
-        50
-    } else if is_boundary(name[p - 1]) || (orig[p].is_ascii_uppercase() && orig[p - 1].is_ascii_lowercase()) {
-        30
+fn token_score(name: &[u8], tok: &[u8], p: usize) -> (i32, bool) {
+    let (mut s, camel) = if p == 0 {
+        (50, false)
+    } else if is_boundary(name[p - 1]) {
+        (30, false)
     } else {
-        6
+        (6, name[p].is_ascii_lowercase())
     };
     let end = p + tok.len();
     if end == name.len() || is_boundary(name[end]) {
         s += 8;
     }
-    s
+    (s, camel)
 }
+
+const CAMEL: i32 = 24;
 
 fn has_ext(name: &[u8], ext: &[u8]) -> bool {
     name.len() > ext.len() && name.ends_with(ext) && name[name.len() - ext.len() - 1] == b'.'
@@ -283,6 +368,7 @@ fn stage1(
     q: &Query,
     finders: &[Finder<'_>],
     within: Option<&Vec<HashSet<u32>>>,
+    floor: i32,
 ) -> Option<(i32, u8)> {
     let e = &v.entries[i as usize];
     if e.flags & DELETED != 0 {
@@ -298,15 +384,20 @@ fn stage1(
     if !q.exts.is_empty() && (dir || !q.exts.iter().any(|x| has_ext(name, x))) {
         return None;
     }
-    let orig = &v.names[e.name_off as usize..e.name_off as usize + e.name_len as usize];
 
     let mut score = 0i32;
     let mut pending = 0u8;
     let mut matched = 0usize;
+    let mut camel = [usize::MAX; 8];
     for (k, (t, f)) in q.tokens.iter().zip(finders).enumerate() {
-        match f.find(name) {
+        let found = if let [b] = **t { memchr::memchr(b, name) } else { f.find(name) };
+        match found {
             Some(p) => {
-                score += token_score(orig, name, t, p);
+                let (s, c) = token_score(name, t, p);
+                score += s;
+                if c && k < 8 {
+                    camel[k] = p;
+                }
                 matched += t.len();
             }
             None if k < 8 => pending |= 1 << k,
@@ -317,7 +408,7 @@ fn stage1(
         let t = q.tokens[0].as_slice();
         if name == t {
             score += 120;
-        } else if stem(name) == t {
+        } else if name.len() > t.len() && name[t.len()] == b'.' && name.starts_with(t) && stem(name) == t {
             score += 100;
         }
     }
@@ -331,6 +422,15 @@ fn stage1(
     if matches!(name.first(), Some(b'.' | b'~' | b'$')) {
         score -= 12;
     }
+    let maybe = camel.iter().filter(|&&p| p != usize::MAX).count() as i32;
+    if maybe > 0 && score + CAMEL * maybe >= floor {
+        let orig = &v.names[e.name_off as usize..e.name_off as usize + e.name_len as usize];
+        for &p in camel.iter().filter(|&&p| p != usize::MAX) {
+            if orig[p].is_ascii_uppercase() && orig[p - 1].is_ascii_lowercase() {
+                score += CAMEL;
+            }
+        }
+    }
 
     if let Some(sets) = within {
         let anc: Vec<u32> = v.ancestors(i).map(|a| v.entries[a as usize].rec).collect();
@@ -339,6 +439,52 @@ fn stage1(
         }
     }
     Some((score, pending))
+}
+
+/// `stage1` for one token and no folder filter, written out flat. The fused
+/// scan runs this for every entry in the index, so it avoids the per-token
+/// loop and bookkeeping. Scores must match `stage1` exactly.
+#[inline]
+fn stage1_one(v: &Volume, i: u32, q: &Query, t: &[u8], f: &Finder<'_>, floor: i32) -> Option<i32> {
+    let e = &v.entries[i as usize];
+    if e.flags & DELETED != 0 {
+        return None;
+    }
+    let dir = e.flags & DIR != 0;
+    match q.kind {
+        Kind::Files if dir => return None,
+        Kind::Dirs if !dir => return None,
+        _ => {}
+    }
+    let (off, len) = (e.name_off as usize, e.name_len as usize);
+    let name = &v.folded[off..off + len];
+    if !q.exts.is_empty() && (dir || !q.exts.iter().any(|x| has_ext(name, x))) {
+        return None;
+    }
+    let p = if let [b] = *t { memchr::memchr(b, name)? } else { f.find(name)? };
+    let (mut score, camel) = token_score(name, t, p);
+    if name == t {
+        score += 120;
+    } else if len > t.len() && name[t.len()] == b'.' && p == 0 && stem(name) == t {
+        score += 100;
+    }
+    score -= (len.saturating_sub(t.len()) as i32).min(48) / 2;
+    if dir {
+        score += 4;
+    }
+    if e.flags & (HIDDEN | SYSTEM) != 0 {
+        score -= 25;
+    }
+    if matches!(name.first(), Some(b'.' | b'~' | b'$')) {
+        score -= 12;
+    }
+    if camel && score + CAMEL >= floor {
+        let orig = &v.names[off..off + len];
+        if orig[p].is_ascii_uppercase() && orig[p - 1].is_ascii_lowercase() {
+            score += CAMEL;
+        }
+    }
+    Some(score)
 }
 
 const PATH_WEIGHTS: &[(&[u8], i32)] = &[
@@ -373,11 +519,9 @@ const PATH_WEIGHTS: &[(&[u8], i32)] = &[
 ];
 
 fn path_score(fp: &[u8]) -> i32 {
-    let mut s: i32 = PATH_WEIGHTS
-        .iter()
-        .filter(|(pat, _)| memmem::find(fp, pat).is_some())
-        .map(|(_, w)| *w)
-        .sum();
+    static FINDERS: std::sync::OnceLock<Vec<(Finder<'static>, i32)>> = std::sync::OnceLock::new();
+    let finders = FINDERS.get_or_init(|| PATH_WEIGHTS.iter().map(|&(pat, w)| (Finder::new(pat), w)).collect());
+    let mut s: i32 = finders.iter().filter(|(f, _)| f.find(fp).is_some()).map(|(_, w)| *w).sum();
     s = s.max(-110);
     let depth = memchr::memchr_iter(b'\\', fp).count() as i32;
     s - depth * 3
@@ -511,6 +655,23 @@ mod tests {
         assert_eq!(s.search(&vols, &Query::parse("repo in:downloads"), 10).total, 1);
         assert_eq!(s.search(&vols, &Query::parse("report.t"), 10).total, 1);
         assert_eq!(s.search(&vols, &Query::parse("heimdall report"), 10).hits[0].path, "C:\\Users\\ethan\\Desktop\\heimdall\\report.txt");
+    }
+
+    #[test]
+    fn short_queries_match_the_general_path() {
+        let v = vol();
+        let q = Query::parse("r");
+        let f = Finder::new(&q.tokens[0]);
+        let mut matched = 0;
+        for i in 0..v.entries.len() as u32 {
+            let flat = stage1_one(&v, i, &q, &q.tokens[0], &f, i32::MIN);
+            let general = stage1(&v, i, &q, std::slice::from_ref(&f), None, i32::MIN).filter(|&(_, p)| p == 0);
+            assert_eq!(flat, general.map(|(s, _)| s), "{}", v.name(i));
+            matched += flat.is_some() as u64;
+        }
+        let r = Searcher::new().search(&[v], &q, 10);
+        assert_eq!(r.total, matched);
+        assert!(r.hits.iter().all(|h| h.path.rsplit('\\').next().unwrap().to_lowercase().contains('r')));
     }
 
     #[test]

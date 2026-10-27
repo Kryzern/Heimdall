@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/heimdall-core", "crates/heimdall-indexer", "crates/heimdall", "crates/heimdall-bench"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "MIT"
 authors = ["Ethan Dsouza (Kryzern)"]

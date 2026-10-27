@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! report ext:pdf,docx in:downloads size:>2mb mod:week type:file
+//! holiday type:image
 //! ```
 
 use crate::index::fold;
@@ -49,11 +50,15 @@ impl Query {
                         true
                     }
                     "type" | "kind" | "is" => {
-                        q.kind = match val.to_ascii_lowercase().as_str() {
+                        let val = val.to_ascii_lowercase();
+                        q.kind = match val.as_str() {
                             "dir" | "dirs" | "folder" | "folders" => Kind::Dirs,
                             "file" | "files" => Kind::Files,
                             _ => Kind::Any,
                         };
+                        if let Some((_, exts)) = CATEGORIES.iter().find(|(names, _)| names.split(' ').any(|n| n == val)) {
+                            q.exts.extend(exts.split(' ').map(|e| e.as_bytes().to_vec()));
+                        }
                         true
                     }
                     "size" => {
@@ -106,6 +111,17 @@ impl Query {
         self.tokens.iter().max_by_key(|t| t.len()).map(|t| t.as_slice())
     }
 }
+
+/// `type:image` and friends: names (space separated) -> extensions.
+pub const CATEGORIES: &[(&str, &str)] = &[
+    ("image images picture pictures photo photos pic", "jpg jpeg png gif webp bmp tif tiff heic heif avif svg ico raw cr2 nef arw dng psd"),
+    ("video videos movie movies", "mp4 mkv mov avi wmv webm m4v flv mpg mpeg ts 3gp"),
+    ("audio music sound song songs", "mp3 flac wav m4a aac ogg opus wma aiff alac mid midi"),
+    ("doc docs document documents", "pdf doc docx odt rtf txt md xls xlsx ods csv ppt pptx odp pages numbers key epub"),
+    ("code source", "rs c h cpp hpp cc cs java kt go py js ts jsx tsx html css scss json toml yaml yml xml sh ps1 bat lua rb php swift sql vue svelte zig"),
+    ("archive archives zip compressed", "zip rar 7z tar gz tgz bz2 xz zst cab iso"),
+    ("app apps program programs exe", "exe msi lnk bat cmd appref-ms"),
+];
 
 fn parse_size(s: &str) -> Option<u64> {
     let s = s.to_ascii_lowercase();
@@ -169,6 +185,15 @@ mod tests {
         assert_eq!(q.within, vec![b"downloads".to_vec()]);
         assert_eq!(q.min_size, Some(2 * 1024 * 1024));
         assert_eq!(q.kind, Kind::Files);
+    }
+
+    #[test]
+    fn categories() {
+        let q = Query::parse("holiday type:image");
+        assert_eq!(q.tokens, vec![b"holiday".to_vec()]);
+        assert!(q.exts.contains(&b"jpg".to_vec()) && q.exts.contains(&b"png".to_vec()));
+        assert_eq!(q.kind, Kind::Any);
+        assert!(!Query::parse("type:video").is_empty());
     }
 
     #[test]

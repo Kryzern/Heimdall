@@ -25,7 +25,7 @@ cbuffer Params : register(b0)
     float  uLens;       // rim refraction distance (px at 1.0 scale)
     float2 uBackSize;   // backdrop texture size (px)
     float  uBlurLod;    // mip level used for the frost
-    float  uPad;
+    float  uShadow;     // shadow strength, 0..1
 };
 
 Texture2D    gBack : register(t0);
@@ -84,7 +84,7 @@ float4 ps(VSOut i) : SV_Target
     shadow += exp(-max(d, 0.0) / (2.0 * uScale)) * lerp(0.10, 0.22, uDark);
     float edge = min(min(px.x, px.y), min(uSize.x - px.x, uSize.y - px.y));
     shadow *= smoothstep(0.0, 14.0 * uScale, edge);
-    shadow *= uOpacity * (1.0 - cov);
+    shadow *= uShadow * uOpacity * (1.0 - cov);
 
     if (cov <= 0.0)
         return float4(0.0, 0.0, 0.0, shadow);
@@ -120,7 +120,12 @@ float4 ps(VSOut i) : SV_Target
         if (uDark > 0.5)
             col *= lerp(0.80, 0.30, saturate((bg - 0.12) * 1.6));
         else
-            col = lerp(col, float3(1.0, 1.0, 1.0), lerp(0.40, 0.78, saturate((0.70 - bg) * 1.4)));
+        {
+            // Light glass brightens like a screen blend: what's behind still
+            // tints the panel instead of being washed toward a flat grey.
+            col = lerp(luma(col).xxx, col, 1.25);
+            col = 1.0 - (1.0 - saturate(col)) * lerp(0.075, 0.20, saturate((bg - 0.35) * 1.6));
+        }
         col = lerp(col, uTint.rgb, uTint.a);
     }
     else

@@ -5,11 +5,13 @@
 //!   heimdall-bench --drives C,D     only these drives
 //!   heimdall-bench --walk           force the directory-walk indexer
 //!   heimdall-bench --iters 50       iterations per query (default 30)
+//!   heimdall-bench --snapshot P     load a saved index (e.g. %LOCALAPPDATA%\Heimdall\index.bin)
+//!                                   instead of building one
 
 mod everything;
 
 use heimdall_core::index::Source;
-use heimdall_core::{ntfs, walk, Query, Searcher, Volume};
+use heimdall_core::{ntfs, snapshot, walk, Query, Searcher, Volume};
 use std::time::{Duration, Instant};
 
 const QUERIES: &[&str] = &[
@@ -32,6 +34,11 @@ fn main() {
     println!("== Index build ==");
     let mut vols = Vec::new();
     let total = Instant::now();
+    if let Some(p) = opt("--snapshot") {
+        vols = snapshot::load(std::path::Path::new(&p)).unwrap_or_else(|e| panic!("{p}: {e}"));
+        println!("  loaded {} volumes from {p}", vols.len());
+    }
+    let drives = if vols.is_empty() { drives } else { Vec::new() };
     for d in &drives {
         let t0 = Instant::now();
         let root = format!("{d}:\\");

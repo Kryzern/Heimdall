@@ -1,7 +1,7 @@
 ; Inno Setup script for the Heimdall installer.
 ; Built by package.ps1:  ISCC /DAppVersion=1.0.0 packaging\heimdall.iss
-; Installs per user (no admin), like install.ps1. The indexer service is an
-; optional task that asks for one admin prompt.
+; Installs per user, like install.ps1. The fast file indexer service is always
+; installed too, which asks for one admin prompt.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -33,9 +33,6 @@ SolidCompression=yes
 OutputDir=..\dist
 OutputBaseFilename=Heimdall-{#AppVersion}-x64-setup
 
-[Tasks]
-Name: indexer; Description: "Install the fast file indexer service (asks for admin)"; Flags: unchecked
-
 [Files]
 Source: "..\target\release\heimdall.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\release\heimdall-indexer.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -51,8 +48,7 @@ Name: "{userprograms}\Heimdall"; Filename: "{app}\heimdall.exe"
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Heimdall"; ValueData: """{app}\heimdall.exe"" --background"; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\heimdall-indexer.exe"; Parameters: "install"; Verb: runas; Flags: shellexec runhidden waituntilterminated; Tasks: indexer; StatusMsg: "Installing the indexer service..."
-Filename: "{app}\heimdall.exe"; Description: "Start Heimdall (press F5 to open it)"; Flags: nowait postinstall
+Filename: "{app}\heimdall.exe"; Description: "Start Heimdall (press Alt+Space to open it)"; Flags: nowait postinstall
 
 [Code]
 procedure StopHeimdall;
@@ -73,6 +69,19 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopHeimdall;
   Result := '';
+end;
+
+// The indexer service needs admin. Ask from here rather than [Run], so saying
+// no to the prompt doesn't show an error: Heimdall then indexes by itself.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    WizardForm.StatusLabel.Caption := 'Installing the file indexer service...';
+    ShellExec('runas', ExpandConstant('{app}\heimdall-indexer.exe'), 'install', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

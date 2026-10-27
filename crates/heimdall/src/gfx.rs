@@ -77,7 +77,8 @@ pub struct GlassParams {
     pub lens: f32,
     pub back_size: [f32; 2],
     pub blur_lod: f32,
-    pub _pad: f32,
+    /// Shadow strength, 0 (off) to 1 (normal).
+    pub shadow: f32,
 }
 
 pub struct Fonts {
@@ -91,6 +92,8 @@ pub struct Fonts {
     pub mono: IDWriteTextFormat,
     pub preview_title: IDWriteTextFormat,
     pub body: IDWriteTextFormat,
+    pub menu: IDWriteTextFormat,
+    pub menu_glyph: IDWriteTextFormat,
 }
 
 pub struct Gfx {
@@ -276,9 +279,12 @@ impl Gfx {
                 mono: text_format(&dwrite, &["Cascadia Mono", "Consolas"], DWRITE_FONT_WEIGHT_NORMAL, 11.0)?,
                 preview_title: text_format(&dwrite, &display, DWRITE_FONT_WEIGHT_SEMI_BOLD, 16.0)?,
                 body: text_format(&dwrite, &small, DWRITE_FONT_WEIGHT_NORMAL, 11.5)?,
+                menu: text_format(&dwrite, &text, DWRITE_FONT_WEIGHT_NORMAL, 13.0)?,
+                menu_glyph: text_format(&dwrite, &icons, DWRITE_FONT_WEIGHT_NORMAL, 15.0)?,
             };
             fonts.glyph.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
             fonts.glyph_row.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            fonts.menu_glyph.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
             fonts.hint.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
             fonts.mono.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR)?;
             fonts.mono.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
@@ -487,6 +493,14 @@ impl Gfx {
         self.set_color(c);
         let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: radius, radiusY: radius };
         unsafe { self.dc.FillRoundedRectangle(&rr, &self.brush) };
+    }
+
+    pub fn stroke_round(&self, r: Rect, radius: f32, c: Color) {
+        self.set_color(c);
+        let w = 1.0 / self.dpi_scale();
+        let inset = Rect::new(r.x + w / 2.0, r.y + w / 2.0, r.w - w, r.h - w);
+        let rr = D2D1_ROUNDED_RECT { rect: inset.d2d(), radiusX: radius, radiusY: radius };
+        unsafe { self.dc.DrawRoundedRectangle(&rr, &self.brush, w, None) };
     }
 
     pub fn fill(&self, r: Rect, c: Color) {

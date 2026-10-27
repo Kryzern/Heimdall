@@ -5,6 +5,7 @@ use crate::actions::url_encode;
 use crate::apps::App;
 use crate::config::Config;
 use crate::items::*;
+use crate::items::Setting as S;
 use crate::platform::{self, pretty_path};
 use heimdall_core::{calc, Results};
 use windows::Win32::Foundation::HWND;
@@ -19,11 +20,17 @@ const G_POWER: char = '\u{E7E8}';
 const G_SIGNOUT: char = '\u{E748}';
 const G_BIN: char = '\u{E74D}';
 const G_SETTINGS: char = '\u{E713}';
-const G_QUIT: char = '\u{E711}';
 const G_EDIT: char = '\u{E70F}';
-const G_REFRESH: char = '\u{E72C}';
-const G_DOWNLOAD: char = '\u{E896}';
-const G_IMPORT: char = '\u{E8B5}';
+const G_KEYBOARD: char = '\u{E765}';
+const G_STARTUP: char = '\u{E768}';
+const G_TRAY: char = '\u{E7F4}';
+const G_THEME: char = '\u{E706}';
+const G_GLASS: char = '\u{E81E}';
+const G_SHADOW: char = '\u{E890}';
+const G_RECENT: char = '\u{E823}';
+const G_GAME: char = '\u{E7FC}';
+const G_TIP: char = '\u{E82F}';
+const G_FILTER: char = '\u{E71C}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -34,12 +41,18 @@ pub enum Mode {
     Windows,
     /// A path like `C:\Us` or `~\Doc`: browse the filesystem.
     Path,
+    /// `?`: tips and filters.
+    Help,
+    /// Heimdall's own settings page. Not reachable by typing; the app sets it.
+    Settings,
 }
 
 pub fn mode(q: &str) -> Mode {
     let t = q.trim_start();
     if t.is_empty() {
         Mode::Recent
+    } else if t == "?" {
+        Mode::Help
     } else if t.starts_with('>') {
         Mode::Windows
     } else if is_path(t) {
@@ -68,7 +81,8 @@ pub struct Ctx<'a> {
 pub fn instant(q: &str, ctx: &Ctx, own: HWND) -> (Vec<Item>, bool) {
     let mut out = Vec::new();
     match mode(q) {
-        Mode::Recent => return (out, false),
+        Mode::Recent | Mode::Settings => return (out, false),
+        Mode::Help => return (tips(), false),
         Mode::Windows => {
             windows(q.trim_start()[1..].trim(), own, &mut out);
             return (out, false);
@@ -165,30 +179,213 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
         }
     }
 
-    let mut own: Vec<(&str, &str, char, Internal)> = vec![
-        ("Heimdall: Settings", "heimdall settings config preferences", G_EDIT, Internal::EditConfig),
-        ("Heimdall: Rebuild file index", "heimdall rebuild reindex index", G_REFRESH, Internal::ReloadIndex),
-        ("Heimdall: Import Flow Launcher web searches", "heimdall import flow launcher", G_IMPORT, Internal::ImportFlow),
-        ("Heimdall: Quit", "heimdall quit exit close", G_QUIT, Internal::Quit),
+    win_settings(q, out);
+
+    let mut own: Vec<(&str, &str, Internal)> = vec![
+        ("Heimdall: Settings", "heimdall settings preferences hotkey shortcut theme", Internal::Settings),
+        ("Heimdall: Open config file", "heimdall config toml edit", Internal::EditConfig),
+        ("Heimdall: Rebuild file index", "heimdall rebuild reindex index", Internal::ReloadIndex),
+        ("Heimdall: Import Flow Launcher web searches", "heimdall import flow launcher", Internal::ImportFlow),
+        ("Heimdall: Quit", "heimdall quit exit close", Internal::Quit),
     ];
     if !ctx.service {
         own.insert(
             0,
-            ("Heimdall: Install the fast file indexer", "heimdall install indexer service faster mft", G_DOWNLOAD, Internal::InstallIndexer),
+            ("Heimdall: Install the fast file indexer", "heimdall install indexer service faster mft", Internal::InstallIndexer),
         );
     }
-    for (title, aliases, glyph, cmd) in own {
+    for (title, aliases, cmd) in own {
         let best = std::iter::once(title)
             .chain(aliases.split(' '))
             .filter_map(|a| fuzzy_words(q, &Target::new(a)).map(|(s, _)| s))
             .max();
         if let Some(score) = best.filter(|s| *s >= 450) {
-            let mut it = Item::new(title, "", Kind::Command, Icon::Glyph(glyph), Action::Heimdall(cmd))
+            let mut it = Item::new(title, "", Kind::Command, heimdall_icon(), Action::Heimdall(cmd))
                 .with_key(format!("h:{title}"));
             it.score = score - 60;
             out.push(it);
         }
     }
+}
+
+/// Heimdall's own logo, so its commands never look like Windows Settings.
+fn heimdall_icon() -> Icon {
+    static EXE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    match EXE.get_or_init(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned())) {
+        Some(p) => Icon::Shell(p.clone()),
+        None => Icon::Glyph(G_SETTINGS),
+    }
+}
+
+/// Pages in Windows Settings and a few classic tools: (title, target,
+/// keywords, Segoe Fluent glyph). The glyphs are drawn in the same muted
+/// colour as every other row icon.
+const WIN_SETTINGS: &[(&str, &str, &str, char)] = &[
+    ("Display", "ms-settings:display", "screen resolution brightness scale scaling monitor refresh rate hdr", '\u{E7F4}'),
+    ("Night light", "ms-settings:nightlight", "blue light night warm", '\u{E708}'),
+    ("Sound", "ms-settings:sound", "audio volume speakers headphones microphone output input", '\u{E767}'),
+    ("Volume mixer", "ms-settings:apps-volume", "app volume mixer audio", '\u{E767}'),
+    ("Notifications", "ms-settings:notifications", "alerts do not disturb focus", '\u{EA8F}'),
+    ("Power & battery", "ms-settings:powersleep", "power sleep battery energy saver screen timeout", '\u{E945}'),
+    ("Storage", "ms-settings:storagesense", "disk space storage sense cleanup free up", '\u{EDA2}'),
+    ("Multitasking", "ms-settings:multitasking", "snap windows alt tab virtual desktops", '\u{E7C4}'),
+    ("Clipboard", "ms-settings:clipboard", "clipboard history paste", '\u{E77F}'),
+    ("About", "ms-settings:about", "system pc name specs version rename computer device info", '\u{E946}'),
+    ("Bluetooth & devices", "ms-settings:bluetooth", "bluetooth devices pair headphones controller", '\u{E702}'),
+    ("Printers & scanners", "ms-settings:printers", "printer scanner print", '\u{E749}'),
+    ("Mouse", "ms-settings:mousetouchpad", "mouse pointer cursor speed scroll", '\u{E962}'),
+    ("Touchpad", "ms-settings:devices-touchpad", "touchpad trackpad gestures", '\u{E962}'),
+    ("Wi-Fi", "ms-settings:network-wifi", "wifi wireless network internet", '\u{E701}'),
+    ("Network & internet", "ms-settings:network", "network internet ethernet ip dns adapter", '\u{E839}'),
+    ("VPN", "ms-settings:network-vpn", "vpn", '\u{E705}'),
+    ("Proxy", "ms-settings:network-proxy", "proxy", '\u{E774}'),
+    ("Airplane mode", "ms-settings:network-airplanemode", "airplane flight mode", '\u{E709}'),
+    ("Mobile hotspot", "ms-settings:network-mobilehotspot", "hotspot tethering share internet", '\u{E88A}'),
+    ("Personalization", "ms-settings:personalization", "personalize appearance", '\u{E771}'),
+    ("Background", "ms-settings:personalization-background", "wallpaper desktop background", '\u{E91B}'),
+    ("Colors", "ms-settings:colors", "dark mode light mode theme accent colour color transparency", '\u{E790}'),
+    ("Themes", "ms-settings:themes", "theme cursor icons", '\u{E771}'),
+    ("Lock screen", "ms-settings:lockscreen", "lock screen", '\u{E72E}'),
+    ("Start menu", "ms-settings:personalization-start", "start menu pins recommended", '\u{ECA5}'),
+    ("Taskbar", "ms-settings:taskbar", "taskbar system tray icons", '\u{E7C4}'),
+    ("Fonts", "ms-settings:fonts", "fonts typeface", '\u{E8D2}'),
+    ("Installed apps", "ms-settings:appsfeatures", "uninstall apps programs remove features", '\u{E71D}'),
+    ("Default apps", "ms-settings:defaultapps", "default browser apps file associations open with", '\u{E7AC}'),
+    ("Startup apps", "ms-settings:startupapps", "startup boot autostart login", '\u{E768}'),
+    ("Optional features", "ms-settings:optionalfeatures", "optional features add", '\u{E710}'),
+    ("Your info", "ms-settings:yourinfo", "account profile picture microsoft account", '\u{E77B}'),
+    ("Sign-in options", "ms-settings:signinoptions", "password pin windows hello fingerprint face login", '\u{E8D7}'),
+    ("Email & accounts", "ms-settings:emailandaccounts", "email accounts work school", '\u{E715}'),
+    ("Date & time", "ms-settings:dateandtime", "date time clock timezone time zone", '\u{E823}'),
+    ("Language & region", "ms-settings:regionlanguage", "language region locale keyboard layout", '\u{E8C1}'),
+    ("Typing", "ms-settings:typing", "keyboard typing autocorrect spellcheck", '\u{E765}'),
+    ("Speech", "ms-settings:speech", "voice speech dictation", '\u{E720}'),
+    ("Game Bar", "ms-settings:gaming-gamebar", "game bar xbox gaming record", '\u{E7FC}'),
+    ("Game Mode", "ms-settings:gaming-gamemode", "game mode gaming performance", '\u{E7FC}'),
+    ("Graphics", "ms-settings:display-advancedgraphics", "gpu graphics preference performance", '\u{E9D9}'),
+    ("Accessibility", "ms-settings:easeofaccess", "accessibility ease of access", '\u{E776}'),
+    ("Text size", "ms-settings:easeofaccess-display", "text size larger bigger", '\u{E8D2}'),
+    ("Magnifier", "ms-settings:easeofaccess-magnifier", "magnifier zoom", '\u{E71E}'),
+    ("Narrator", "ms-settings:easeofaccess-narrator", "narrator screen reader", '\u{E776}'),
+    ("Privacy & security", "ms-settings:privacy", "privacy security permissions", '\u{EA18}'),
+    ("Camera permissions", "ms-settings:privacy-webcam", "camera webcam privacy", '\u{E722}'),
+    ("Microphone permissions", "ms-settings:privacy-microphone", "microphone mic privacy", '\u{E720}'),
+    ("Location", "ms-settings:privacy-location", "location gps privacy", '\u{E707}'),
+    ("Windows Security", "windowsdefender:", "antivirus defender virus firewall security", '\u{EA18}'),
+    ("Windows Update", "ms-settings:windowsupdate", "update updates patch upgrade", '\u{E895}'),
+    ("Recovery", "ms-settings:recovery", "reset recovery restore reinstall", '\u{E777}'),
+    ("Activation", "ms-settings:activation", "activation product key license", '\u{E73E}'),
+    ("For developers", "ms-settings:developers", "developer mode sudo", '\u{E943}'),
+    ("Control Panel", "control.exe", "control panel classic", '\u{E713}'),
+    ("Device Manager", "devmgmt.msc", "device manager drivers hardware", '\u{E772}'),
+    ("Environment variables", "SystemPropertiesAdvanced.exe", "environment variables path advanced system settings", '\u{E943}'),
+    ("Disk Management", "diskmgmt.msc", "disk management partition format drive", '\u{EDA2}'),
+    ("Services", "services.msc", "services", '\u{E90F}'),
+];
+
+/// Windows settings pages: a title match at substring strength, or a keyword
+/// match at word-prefix strength, so `re` doesn't flood the list.
+fn win_settings(q: &str, out: &mut Vec<Item>) {
+    for &(title, target, keywords, glyph) in WIN_SETTINGS {
+        let t = fuzzy_words(q, &Target::new(title)).filter(|(s, _)| *s >= 450);
+        let k = keywords
+            .split(' ')
+            .filter_map(|w| fuzzy_words(q, &Target::new(w)).map(|(s, _)| s))
+            .max()
+            .filter(|s| *s >= 650);
+        let score = match (&t, k) {
+            (Some((a, _)), Some(b)) => (*a).max(b),
+            (Some((a, _)), None) => *a,
+            (None, Some(b)) => b - 30,
+            (None, None) => continue,
+        };
+        let sub = if target.contains(':') { "Windows Settings" } else { "Windows tool" };
+        let mut it = Item::new(title, sub, Kind::WinSetting, Icon::Glyph(glyph), Action::Open(target.to_string()))
+            .with_key(format!("w:{target}"));
+        it.score = score - 50;
+        if let Some((_, pos)) = t {
+            it.hl = ranges16(title, &pos);
+        }
+        out.push(it);
+    }
+}
+
+/// The `?` page: what you can type.
+fn tips() -> Vec<Item> {
+    let rows: &[(&str, &str, char, &str)] = &[
+        ("ext:pdf", "Only these extensions, e.g. ext:pdf,docx", G_FILTER, "ext:"),
+        ("type:image", "Also video, audio, doc, code, archive, app, folder and file", G_FILTER, "type:"),
+        ("in:downloads", "Inside a folder with this name", G_FILTER, "in:"),
+        ("size:>100mb", "Bigger than a size; size:<1mb for smaller", G_FILTER, "size:>"),
+        ("mod:week", "Changed recently: today, week, month, 3d, 12h", G_FILTER, "mod:"),
+        (">", "Switch between open windows", G_TIP, ">"),
+        ("C:\\", "Browse folders by path; Tab completes a folder", G_TIP, "C:\\"),
+        ("g rust lifetimes", "Search the web with a prefix: g, ddg, yt, gh, wiki", G_GLOBE, "g "),
+        ("2 * (3 + 4)", "Calculator; Enter copies the answer", G_CALC, ""),
+    ];
+    let mut out: Vec<Item> = rows
+        .iter()
+        .map(|&(title, sub, glyph, insert)| {
+            Item::new(title, sub, Kind::Tip, Icon::Glyph(glyph), Action::Insert(insert.to_string())).with_key(format!("tip:{title}"))
+        })
+        .collect();
+    out.push(
+        Item::new("Heimdall settings", "Change the hotkey, theme, shadow and more", Kind::Tip, heimdall_icon(), Action::Heimdall(Internal::Settings))
+            .with_key("tip:settings"),
+    );
+    let n = out.len() as i32;
+    for (i, it) in out.iter_mut().enumerate() {
+        it.score = n - i as i32;
+    }
+    out
+}
+
+/// Heimdall's settings page, filtered by `q`. `recording` and `notice` describe
+/// the hotkey row while a new shortcut is being captured.
+pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) -> Vec<Item> {
+    let on = |b: bool| if b { "On" } else { "Off" }.to_string();
+    let cap = |s: &str| {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    };
+    let hotkey_sub = match (recording, notice) {
+        (true, _) => "Press the new shortcut now. Esc cancels.".to_string(),
+        (false, Some(n)) => n.to_string(),
+        (false, None) => "The shortcut that opens Heimdall".to_string(),
+    };
+    let hotkey_value = if recording { "\u{2026}".to_string() } else { cfg.hotkey.clone() };
+    let rows: Vec<(&str, String, char, Setting, String)> = vec![
+        ("Hotkey", hotkey_sub, G_KEYBOARD, S::Hotkey, hotkey_value),
+        ("Start with Windows", "Open in the background when you sign in".into(), G_STARTUP, S::Autostart, on(cfg.start_with_windows)),
+        ("Tray icon", "Show Heimdall in the notification area".into(), G_TRAY, S::Tray, on(cfg.tray)),
+        ("Theme", "System, dark or light".into(), G_THEME, S::Theme, cap(&cfg.theme)),
+        ("Glass", "Liquid, auto (follow Windows transparency) or solid".into(), G_GLASS, S::Glass, cap(&cfg.glass)),
+        ("Shadow", "Normal, soft or off".into(), G_SHADOW, S::Shadow, cap(&cfg.shadow)),
+        ("Recent items", "Show recent files when the search box is empty".into(), G_RECENT, S::Recent, on(cfg.show_recent)),
+        ("Game mode", "Release the hotkey while a fullscreen game has focus".into(), G_GAME, S::GameMode, on(cfg.game_mode)),
+    ];
+    let mut out = Vec::new();
+    for (title, sub, glyph, setting, value) in rows {
+        let hit = if q.trim().is_empty() { Some((0, Vec::new())) } else { fuzzy_words(q, &Target::new(title)) };
+        let Some((_, pos)) = hit else { continue };
+        let mut it = Item::new(title, sub, Kind::Setting, Icon::Glyph(glyph), Action::Heimdall(Internal::Set(setting)))
+            .with_key(format!("set:{title}"));
+        it.hl = ranges16(title, &pos);
+        it.value = value;
+        out.push(it);
+    }
+    let edit = "Open config file";
+    if q.trim().is_empty() || fuzzy_words(q, &Target::new(edit)).is_some() {
+        out.push(
+            Item::new(edit, "Width, result count, web searches and more", Kind::Setting, Icon::Glyph(G_EDIT), Action::Heimdall(Internal::EditConfig))
+                .with_key("set:config"),
+        );
+    }
+    let n = out.len() as i32;
+    for (i, it) in out.iter_mut().enumerate() {
+        it.score = 1000 + n - i as i32;
+    }
+    out
 }
 
 fn windows(filter: &str, own: HWND, out: &mut Vec<Item>) {
