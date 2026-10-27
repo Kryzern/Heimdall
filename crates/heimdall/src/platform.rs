@@ -113,6 +113,13 @@ pub fn foreground_fullscreen(fg: HWND) -> bool {
         return false;
     }
     unsafe {
+        // A maximized window's rect spills past the monitor by its resize
+        // borders, so on a screen without a visible taskbar it looks
+        // fullscreen. Real fullscreen (games, F11, video players) is never
+        // maximized: browsers restore the window before going fullscreen.
+        if IsZoomed(fg).as_bool() {
+            return false;
+        }
         let mut r = RECT::default();
         if GetWindowRect(fg, &mut r).is_err() {
             return false;
