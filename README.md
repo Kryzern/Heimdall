@@ -89,6 +89,19 @@ The release also has `Heimdall-1.0.1-x64.zip`. Unzip it, right-click `install.ps
 </details>
 
 <details>
+<summary><b>With Scoop</b></summary>
+<br>
+
+```powershell
+scoop bucket add heimdall https://github.com/Kryzern/Heimdall
+scoop install heimdall/heimdall
+```
+
+This installs the portable version, so `scoop update` keeps it up to date. Turn on **Start with Windows** in Heimdall's settings, and type `install indexer` if you want the faster file indexer too.
+
+</details>
+
+<details>
 <summary><b>Uninstalling</b></summary>
 <br>
 
@@ -108,6 +121,7 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 | `bluetooth`, `dark mode` | Windows settings pages, and tools like Device Manager |
 | `heimdall\src main` | Path fragments: `main` somewhere under a `heimdall\src` folder |
 | `2^10 * 3` | Calculator, Enter copies the answer |
+| `b64 hello`, `b64d aGVsbG8=` | Base64 encode and decode, Enter copies the result |
 | `>` | Open windows, pick one to switch to it |
 | `C:\Us` or `~\Doc` | Browse folders, Tab completes |
 | `g rust lifetimes` | Web search with a prefix (`g`, `ddg`, `yt`, `gh`, `wiki`, or your own) |
