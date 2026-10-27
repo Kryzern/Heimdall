@@ -22,8 +22,10 @@
     ],
     "uninstaller": {
         "script": [
-            "if ($cmd -eq 'uninstall') {",
-            "    Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'Heimdall' -ErrorAction SilentlyContinue",
+            "$run = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'",
+            "$value = (Get-ItemProperty -Path $run -Name 'Heimdall' -ErrorAction SilentlyContinue).Heimdall",
+            "if ($cmd -eq 'uninstall' -and $value -like '*\\apps\\heimdall\\*') {",
+            "    Remove-ItemProperty -Path $run -Name 'Heimdall'",
             "}"
         ]
     },
