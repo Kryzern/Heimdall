@@ -74,7 +74,7 @@ impl Searcher {
 
         let finders: Vec<Finder<'_>> = q.tokens.iter().map(|t| Finder::new(t)).collect();
         // Results that still need a path check or metadata get a deeper pool.
-        let keep = if q.needs_metadata() || q.tokens.len() > 1 { 4096 } else { 384 }.max(limit * 4);
+        let keep = if q.needs_metadata() || q.tokens.len() > 1 { 4096 } else if !q.exclude.is_empty() { 1024 } else { 384 }.max(limit * 4);
 
         let (mut total, mut scored) = if q.tokens.len() == 1 && q.tokens[0].len() <= 2 {
             fused(vols, q, &finders, &within, keep)
@@ -102,12 +102,20 @@ impl Searcher {
                 .enumerate()
                 .map(|(vi, list)| {
                     let v = &vols[vi];
+                    if q.excludes_volume(&v.root) {
+                        return (0, Vec::new());
+                    }
                     let within = within.get(vi);
                     list.par_chunks(16_384)
                         .map(|chunk| {
                             let mut top = TopK::new(keep);
                             for &i in chunk {
                                 if let Some((score, pending)) = stage1(v, i, q, &finders, within, top.floor) {
+                                    // Drop excluded rows before they take a place in the pool,
+                                    // or a folder full of matches (node_modules) crowds it out.
+                                    if score > top.floor && excluded(v, i, q) {
+                                        continue;
+                                    }
                                     top.push(Scored { score, vol: vi as u16, pending, ent: i });
                                 }
                             }
@@ -243,6 +251,9 @@ fn fused(
     vols.par_iter()
         .enumerate()
         .map(|(vi, v)| {
+            if q.excludes_volume(&v.root) {
+                return (0, Vec::new());
+            }
             let n = v.entries.len() as u32;
             let within = within.get(vi);
             // Without a candidate list, an entry whose name matches no token
@@ -527,9 +538,16 @@ fn path_score(fp: &[u8]) -> i32 {
     s - depth * 3
 }
 
+fn excluded(v: &Volume, i: u32, q: &Query) -> bool {
+    !q.exclude.is_empty() && q.excludes_path(&crate::index::fold(&v.path(i)))
+}
+
 fn stage2(v: &Volume, s: &Scored, q: &Query) -> Option<Hit> {
     let path = v.path(s.ent);
     let fp = crate::index::fold(&path);
+    if q.excludes_path(&fp) {
+        return None;
+    }
     if s.pending != 0 {
         for (k, t) in q.tokens.iter().enumerate().take(8) {
             if s.pending & (1 << k) != 0 && memmem::find(&fp, t).is_none() {
@@ -577,6 +595,7 @@ fn top_k(v: &mut Vec<Scored>, k: usize) {
 fn fuzzy(vols: &[Volume], tok: &[u8], q: &Query) -> Vec<Scored> {
     vols.par_iter()
         .enumerate()
+        .filter(|(_, v)| !q.excludes_volume(&v.root))
         .flat_map_iter(|(vi, v)| {
             let n = v.entries.len() as u32;
             (0..n)

@@ -3,6 +3,7 @@
 //! ```text
 //! report ext:pdf,docx in:downloads size:>2mb mod:week type:file
 //! holiday type:image
+//! notes -in:node_modules -in:"C:\Program Files" -in:D:
 //! ```
 
 use crate::index::fold;
@@ -28,12 +29,16 @@ pub struct Query {
     pub max_size: Option<u64>,
     /// Unix seconds; only results modified after this.
     pub modified_after: Option<u64>,
+    /// `-in:` filters, folded: a drive (`d:`), a path (`c:\windows`) or a
+    /// folder name (`node_modules`). Matching results are dropped.
+    pub exclude: Vec<Vec<u8>>,
 }
 
 impl Query {
     pub fn parse(input: &str) -> Query {
         let mut q = Query::default();
-        for word in input.split_whitespace() {
+        for word in words(input) {
+            let word = word.as_str();
             if let Some((key, val)) = word.split_once(':') {
                 if val.is_empty() {
                     continue;
@@ -68,6 +73,14 @@ impl Query {
                             q.max_size = parse_size(rest);
                         } else {
                             q.min_size = parse_size(val);
+                        }
+                        true
+                    }
+                    "-in" => {
+                        let v = fold(&val.replace('/', "\\"));
+                        let v = v.strip_suffix(b"\\").map_or(v.clone(), <[u8]>::to_vec);
+                        if !v.is_empty() {
+                            q.exclude.push(v);
                         }
                         true
                     }
@@ -106,10 +119,50 @@ impl Query {
         self.min_size.is_some() || self.max_size.is_some() || self.modified_after.is_some()
     }
 
+    /// Is a whole volume (root like `C:\`) excluded by a drive filter?
+    pub fn excludes_volume(&self, root: &str) -> bool {
+        let root = fold(root.trim_end_matches('\\'));
+        self.exclude.iter().any(|x| *x == root)
+    }
+
+    /// Is a folded full path excluded? A filter with `:` or `\` is a path
+    /// prefix; anything else must equal one of the path's components.
+    pub fn excludes_path(&self, fp: &[u8]) -> bool {
+        self.exclude.iter().any(|x| {
+            if x.contains(&b':') || x.contains(&b'\\') || x.contains(&b'/') {
+                fp.starts_with(x) && fp.get(x.len()).is_none_or(|&c| c == b'\\')
+            } else {
+                fp.split(|&c| c == b'\\').any(|part| part == x.as_slice())
+            }
+        })
+    }
+
     /// The most selective token: drives the SIMD prefilter.
     pub fn primary(&self) -> Option<&[u8]> {
         self.tokens.iter().max_by_key(|t| t.len()).map(|t| t.as_slice())
     }
+}
+
+/// Split on whitespace, except inside double quotes, which are removed:
+/// `-in:"C:\Program Files"` is one word.
+fn words(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut cur, mut quoted) = (String::new(), false);
+    for c in input.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 /// `type:image` and friends: names (space separated) -> extensions.
@@ -176,6 +229,19 @@ pub fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excludes() {
+        let q = Query::parse(r#"notes -in:node_modules -in:"C:\Program Files\" -in:d: -in:E:/Games"#);
+        assert_eq!(q.tokens, vec![b"notes".to_vec()]);
+        assert!(q.excludes_path(br"c:\code\app\node_modules\lib\notes.md"));
+        assert!(!q.excludes_path(br"c:\code\node_modules_backup\notes.md"));
+        assert!(q.excludes_path(br"c:\program files\app\notes.txt"));
+        assert!(!q.excludes_path(br"c:\program files (x86)\notes.txt"));
+        assert!(q.excludes_path(br"e:\games\notes.txt"));
+        assert!(q.excludes_volume(r"D:\"));
+        assert!(!q.excludes_volume(r"C:\"));
+    }
 
     #[test]
     fn filters() {

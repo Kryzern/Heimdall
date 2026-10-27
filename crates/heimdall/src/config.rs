@@ -26,6 +26,9 @@ pub struct Config {
     pub corners: String,
     /// Animate opening, resizing and moving the selection.
     pub animations: bool,
+    /// Left out of file search: drives ("D:"), folders ("C:\Windows") or
+    /// folder names anywhere ("node_modules").
+    pub exclude: Vec<String>,
     /// Width of the search panel in DIPs.
     pub width: f32,
     pub max_results: usize,
@@ -58,6 +61,7 @@ impl Default for Config {
             shadow: "normal".into(),
             corners: "round".into(),
             animations: true,
+            exclude: Vec::new(),
             width: 680.0,
             max_results: 8,
             show_recent: true,
@@ -87,6 +91,8 @@ const HEADER: &str = "\
 # shadow       \"normal\" | \"soft\" | \"off\"
 # corners      \"round\" | \"windows\" (like Windows 11) | \"square\"
 # animations   false makes everything appear instantly
+# exclude      left out of file search: drives, folders or folder names anywhere,
+#              e.g. ['D:', 'C:\\Windows', 'node_modules'] (single quotes keep the \\ as is)
 # tray         show an icon in the notification area
 # [[web]]      prefix searches: type `g rust lifetimes`
 

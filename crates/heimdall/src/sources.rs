@@ -348,6 +348,7 @@ fn tips() -> Vec<Item> {
         ("ext:pdf", "Only these extensions, e.g. ext:pdf,docx", G_FILTER, "ext:"),
         ("type:image", "Also video, audio, doc, code, archive, app, folder and file", G_FILTER, "type:"),
         ("in:downloads", "Inside a folder with this name", G_FILTER, "in:"),
+        ("-in:node_modules", "Leave out a folder or drive", G_FILTER, "-in:"),
         ("size:>100mb", "Bigger than a size; size:<1mb for smaller", G_FILTER, "size:>"),
         ("mod:week", "Changed recently: today, week, month, 3d, 12h", G_FILTER, "mod:"),
         (">", "Switch between open windows", G_TIP, ">"),

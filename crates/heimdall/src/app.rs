@@ -549,7 +549,11 @@ impl App {
             self.instant_rows = rows;
         }
         if want_files {
-            self.files.query(self.qid, &q);
+            let mut fq = q.clone();
+            for x in &self.cfg.exclude {
+                fq.push_str(&format!(" -in:\"{}\"", x.replace('"', "")));
+            }
+            self.files.query(self.qid, &fq);
             self.files_pending = true;
             // Keep rows that still match so the list doesn't flicker while typing.
             let ql = q.to_lowercase();
