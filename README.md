@@ -51,6 +51,12 @@ Heimdall sits somewhere in between. It's two native executables, under 2 MB toge
 
 Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 came straight from your comments and issues.
 
+## What's new in 1.0.3
+
+- **Leave folders and drives out of search.** Add them to `exclude` in the config, like `exclude = ['D:', 'C:\Windows', 'node_modules']`, or type `-in:node_modules` for a single search.
+- **Corners**: round, Windows (the same smaller radius Windows 11 uses) or square.
+- **Animations can be turned off**, so everything appears instantly.
+
 ## What's new in 1.0.2
 
 - **The hotkey no longer stops working** after the first press when a maximized window is open on a screen without a visible taskbar (auto-hide, or a second monitor). Game mode thought those windows were fullscreen games.
@@ -72,7 +78,7 @@ Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 c
 
 ## Install
 
-1. Download `Heimdall-1.0.2-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
+1. Download `Heimdall-1.0.3-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
 2. Press <kbd>Alt</kbd> + <kbd>Space</kbd>.
 
 The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu and the tray, starts it, and sets it to start with Windows.
@@ -91,7 +97,7 @@ If you say no to the admin prompt, that's completely fine, Heimdall still works 
 <summary><b>Without the installer</b></summary>
 <br>
 
-The release also has `Heimdall-1.0.2-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
+The release also has `Heimdall-1.0.3-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
 
 </details>
 
@@ -124,6 +130,7 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 |---|---|
 | `chr` | Apps by prefix, word or acronym (`vsc` finds Visual Studio Code) |
 | `report ext:pdf` | Files, with filters: `ext:`, `in:`, `type:folder`, `size:>100mb`, `mod:week` |
+| `notes -in:node_modules` | Leave a folder, path or drive out of the results (`-in:D:`, `-in:"C:\Program Files"`) |
 | `holiday type:image` | File types: `image`, `video`, `audio`, `doc`, `code`, `archive`, `app` |
 | `bluetooth`, `dark mode` | Windows settings pages, and tools like Device Manager |
 | `heimdall\src main` | Path fragments: `main` somewhere under a `heimdall\src` folder |
@@ -168,6 +175,7 @@ glass = "liquid"              # "auto" follows Windows transparency, "solid" is 
 shadow = "normal"             # "soft" or "off"
 corners = "round"             # "windows" for Windows 11's smaller corners, or "square"
 animations = true             # false makes everything appear instantly
+exclude = ['D:', 'C:\Windows', 'node_modules']  # left out of file search
 width = 680.0
 max_results = 8
 show_recent = true
