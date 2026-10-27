@@ -1,0 +1,123 @@
+name: Publish Chocolatey package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Stable GitHub release tag; blank selects latest stable release
+        required: false
+        type: string
+      publish:
+        description: Publish to the Chocolatey Community Repository after tests
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chocolatey-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.publish }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: chocolatey
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Build target release package
+        id: target
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $outputDirectory = Join-Path $env:GITHUB_WORKSPACE 'artifacts\chocolatey'
+          $buildArguments = @{ OutputDirectory = $outputDirectory }
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
+            $buildArguments.ReleaseTag = $env:RELEASE_TAG
+          }
+          $package = & "$env:GITHUB_WORKSPACE\packaging\chocolatey\build-package.ps1" @buildArguments
+          if (-not $package) { throw 'Package builder returned no package.' }
+          "version=$($package.Version)" >> $env:GITHUB_OUTPUT
+          "path=$($package.PackagePath)" >> $env:GITHUB_OUTPUT
+
+      - name: Build previous stable package for upgrade test
+        id: previous
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $outputDirectory = Join-Path $env:GITHUB_WORKSPACE 'artifacts\chocolatey'
+          $buildArguments = @{ OutputDirectory = $outputDirectory; PreviousStable = $true }
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
+            $buildArguments.ReleaseTag = $env:RELEASE_TAG
+          }
+          $package = & "$env:GITHUB_WORKSPACE\packaging\chocolatey\build-package.ps1" @buildArguments
+          if ($package) {
+            "version=$($package.Version)" >> $env:GITHUB_OUTPUT
+          }
+          else {
+            'version=' >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Test install, upgrade, and uninstall
+        shell: pwsh
+        env:
+          CURRENT_VERSION: ${{ steps.target.outputs.version }}
+          PREVIOUS_VERSION: ${{ steps.previous.outputs.version }}
+        run: |
+          $testArguments = @{
+            PackageDirectory = Join-Path $env:GITHUB_WORKSPACE 'artifacts\chocolatey'
+            CurrentVersion = $env:CURRENT_VERSION
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:PREVIOUS_VERSION)) {
+            $testArguments.PreviousVersion = $env:PREVIOUS_VERSION
+          }
+          & "$env:GITHUB_WORKSPACE\packaging\chocolatey\test-package.ps1" @testArguments
+
+      - name: Upload tested package
+        uses: actions/upload-artifact@v4
+        with:
+          name: heimdall-launcher-${{ steps.target.outputs.version }}
+          path: ${{ steps.target.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Skip already published version
+        id: feed
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          $listed = & choco list heimdall-launcher --exact --version $env:PACKAGE_VERSION --source https://community.chocolatey.org/api/v2/ --limit-output
+          if ($LASTEXITCODE -notin @(0, 2)) { throw 'Could not check the Chocolatey Community Repository for an existing package version.' }
+          $expected = "heimdall-launcher|$env:PACKAGE_VERSION"
+          $alreadyPublished = @($listed | Where-Object { ([string]$_).Trim() -eq $expected }).Count -gt 0
+          if ($alreadyPublished) {
+            Write-Host "heimdall-launcher $env:PACKAGE_VERSION already exists on the Community Repository; skipping push."
+            'already_published=true' >> $env:GITHUB_OUTPUT
+          }
+          else {
+            'already_published=false' >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Publish to Chocolatey Community Repository
+        if: ${{ steps.feed.outputs.already_published != 'true' }}
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+          PACKAGE_PATH: ${{ steps.target.outputs.path }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CHOCOLATEY_API_KEY)) {
+            throw 'Configure CHOCOLATEY_API_KEY in the protected chocolatey environment before publishing.'
+          }
+          & choco push $env:PACKAGE_PATH --source https://push.chocolatey.org/ "--api-key=$env:CHOCOLATEY_API_KEY"
+          if ($LASTEXITCODE -ne 0) { throw "choco push failed with exit code $LASTEXITCODE." }
