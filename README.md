@@ -51,6 +51,13 @@ Heimdall sits somewhere in between. It's two native executables, under 2 MB toge
 
 Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 came straight from your comments and issues.
 
+## What's new in 1.0.2
+
+- **The hotkey no longer stops working** after the first press when a maximized window is open on a screen without a visible taskbar (auto-hide, or a second monitor). Game mode thought those windows were fullscreen games.
+- **Upgrading keeps the file indexer running.** Before, installing over an older version could leave the indexer service stopped.
+- **Base64.** Type `b64 hello` to encode or `b64d aGVsbG8=` to decode, Enter copies the result.
+- **Scoop support**, see [Install](#install).
+
 ## What's new in 1.0.1
 
 - **Alt+Space by default**, and you can change the hotkey from inside Heimdall now. Just type `settings`.
@@ -65,7 +72,7 @@ Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 c
 
 ## Install
 
-1. Download `Heimdall-1.0.1-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
+1. Download `Heimdall-1.0.2-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
 2. Press <kbd>Alt</kbd> + <kbd>Space</kbd>.
 
 The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu and the tray, starts it, and sets it to start with Windows.
@@ -84,7 +91,7 @@ If you say no to the admin prompt, that's completely fine, Heimdall still works 
 <summary><b>Without the installer</b></summary>
 <br>
 
-The release also has `Heimdall-1.0.1-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
+The release also has `Heimdall-1.0.2-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
 
 </details>
 

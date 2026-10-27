@@ -83,7 +83,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "heimdall"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "embed-resource",
  "heimdall-core",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-bench"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "heimdall-core",
  "windows-sys",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "memchr",
  "rayon",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-indexer"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "embed-resource",
  "heimdall-core",
