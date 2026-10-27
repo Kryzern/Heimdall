@@ -28,6 +28,8 @@ const G_TRAY: char = '\u{E7F4}';
 const G_THEME: char = '\u{E706}';
 const G_GLASS: char = '\u{E81E}';
 const G_SHADOW: char = '\u{E890}';
+const G_CORNERS: char = '\u{E739}';
+const G_ANIM: char = '\u{E916}';
 const G_RECENT: char = '\u{E823}';
 const G_GAME: char = '\u{E7FC}';
 const G_TIP: char = '\u{E82F}';
@@ -392,6 +394,8 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) ->
         ("Theme", "System, dark or light".into(), G_THEME, S::Theme, cap(&cfg.theme)),
         ("Glass", "Liquid, auto (follow Windows transparency) or solid".into(), G_GLASS, S::Glass, cap(&cfg.glass)),
         ("Shadow", "Normal, soft or off".into(), G_SHADOW, S::Shadow, cap(&cfg.shadow)),
+        ("Corners", "Round, Windows (like Windows 11) or square".into(), G_CORNERS, S::Corners, cap(&cfg.corners)),
+        ("Animations", "Turn off to make everything appear instantly".into(), G_ANIM, S::Animations, on(cfg.animations)),
         ("Recent items", "Show recent files when the search box is empty".into(), G_RECENT, S::Recent, on(cfg.show_recent)),
         ("Game mode", "Release the hotkey while a fullscreen game has focus".into(), G_GAME, S::GameMode, on(cfg.game_mode)),
     ];

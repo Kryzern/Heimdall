@@ -154,7 +154,7 @@ You can also drag any file result straight into another app.
 
 ## Settings
 
-Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Theme, glass, shadow, the tray icon and starting with Windows all change with one Enter each.
+Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Theme, glass, shadow, corners, animations, the tray icon and starting with Windows all change with one Enter each.
 
 Everything else lives in `%APPDATA%\Heimdall\config.toml`, which gets created the first time Heimdall runs. Changes there apply the next time Heimdall opens.
 
@@ -166,6 +166,8 @@ theme = "system"              # "dark" or "light"
 accent = "system"             # or a colour like "#7C9CFF"
 glass = "liquid"              # "auto" follows Windows transparency, "solid" is opaque
 shadow = "normal"             # "soft" or "off"
+corners = "round"             # "windows" for Windows 11's smaller corners, or "square"
+animations = true             # false makes everything appear instantly
 width = 680.0
 max_results = 8
 show_recent = true

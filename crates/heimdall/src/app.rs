@@ -118,6 +118,8 @@ struct Theme {
     dark: bool,
     accent: Color,
     glass: bool,
+    /// Multiplies every corner radius: 1 round, smaller for "windows", 0 square.
+    round: f32,
     text: Color,
     sub: Color,
     faint: Color,
@@ -140,6 +142,11 @@ impl Theme {
             _ => true,
         } && !platform::battery_saver()
             && !platform::remote_session();
+        let round = match cfg.corners.as_str() {
+            "windows" => 8.0 / RADIUS,
+            "square" => 0.0,
+            _ => 1.0,
+        };
         let mix = |a: Color, b: Color, t: f32| {
             Color::rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0)
         };
@@ -148,6 +155,7 @@ impl Theme {
                 dark,
                 accent,
                 glass,
+                round,
                 text: Color::rgba(1.0, 1.0, 1.0, 0.94),
                 sub: Color::rgba(1.0, 1.0, 1.0, 0.56),
                 faint: Color::rgba(1.0, 1.0, 1.0, 0.36),
@@ -159,6 +167,7 @@ impl Theme {
                 dark,
                 accent,
                 glass,
+                round,
                 text: Color::rgba(0.05, 0.05, 0.07, 0.92),
                 sub: Color::rgba(0.0, 0.0, 0.02, 0.54),
                 faint: Color::rgba(0.0, 0.0, 0.02, 0.38),
@@ -450,10 +459,15 @@ impl App {
         self.refresh();
         self.height.snap(self.target_height());
         self.sel_y.snap(self.sel_target());
-        self.opacity.snap(0.0);
-        self.opacity.target = 1.0;
-        self.zoom.snap(0.965);
-        self.zoom.target = 1.0;
+        if self.cfg.animations {
+            self.opacity.snap(0.0);
+            self.opacity.target = 1.0;
+            self.zoom.snap(0.965);
+            self.zoom.target = 1.0;
+        } else {
+            self.opacity.snap(1.0);
+            self.zoom.snap(1.0);
+        }
         self.anim_last = None;
         self.render();
 
@@ -909,6 +923,8 @@ impl App {
             Setting::Theme => cycle(&mut c.theme, &["system", "dark", "light"]),
             Setting::Glass => cycle(&mut c.glass, &["liquid", "auto", "solid"]),
             Setting::Shadow => cycle(&mut c.shadow, &["normal", "soft", "off"]),
+            Setting::Corners => cycle(&mut c.corners, &["round", "windows", "square"]),
+            Setting::Animations => c.animations = !c.animations,
             Setting::Recent => c.show_recent = !c.show_recent,
             Setting::GameMode => c.game_mode = !c.game_mode,
         }
@@ -1127,15 +1143,15 @@ impl App {
         // A soft shadow from a few widening layers.
         for (grow, a) in [(14.0, 0.025), (9.0, 0.04), (5.0, 0.06), (2.0, 0.08)] {
             let a = if th.dark { a * 2.2 } else { a };
-            g.fill_round(Rect::new(r.x - grow, r.y - grow + 6.0, r.w + 2.0 * grow, r.h + 2.0 * grow), 14.0 + grow, black.alpha(a));
+            g.fill_round(Rect::new(r.x - grow, r.y - grow + 6.0, r.w + 2.0 * grow, r.h + 2.0 * grow), (14.0 + grow) * th.round, black.alpha(a));
         }
         let (bg, rim, hover) = if th.dark {
             (Color::rgba(0.115, 0.12, 0.137, 0.97), white.alpha(0.11), white.alpha(0.085))
         } else {
             (Color::rgba(0.992, 0.992, 0.996, 0.98), black.alpha(0.09), black.alpha(0.055))
         };
-        g.fill_round(r, 13.0, bg);
-        g.stroke_round(r, 13.0, rim);
+        g.fill_round(r, 13.0 * th.round, bg);
+        g.stroke_round(r, 13.0 * th.round, rim);
         let mut y = r.y + MENU_PAD;
         for (i, row) in m.rows.iter().enumerate() {
             let Some((_, glyph, label, hint)) = row else {
@@ -1145,7 +1161,7 @@ impl App {
             };
             let selected = i == m.sel;
             if selected {
-                g.fill_round(Rect::new(r.x + 6.0, y, r.w - 12.0, MENU_ROW), 8.0, hover);
+                g.fill_round(Rect::new(r.x + 6.0, y, r.w - 12.0, MENU_ROW), 8.0 * th.round, hover);
             }
             g.text(&glyph.to_string(), &g.fonts.menu_glyph, Rect::new(r.x + 12.0, y, 26.0, MENU_ROW), if selected { th.text } else { th.sub });
             g.text(label, &g.fonts.menu, Rect::new(r.x + 44.0, y, r.w - 44.0 - 96.0, MENU_ROW), th.text);
@@ -1413,7 +1429,11 @@ impl App {
         let now = Instant::now();
         let dt = self.anim_last.map(|t| (now - t).as_secs_f32()).unwrap_or(1.0 / 120.0).min(1.0 / 30.0);
         let mut moving = false;
+        let animate = self.cfg.animations;
         for s in [&mut self.height, &mut self.sel_y, &mut self.opacity, &mut self.zoom, &mut self.pw, &mut self.menu_fade] {
+            if !animate {
+                s.snap(s.target);
+            }
             moving |= s.step(dt);
         }
         self.render();
@@ -1464,8 +1484,8 @@ impl App {
             sel: [zsel.x * s, zsel.y * s, zsel.w * s, zsel.h * s],
             tint,
             accent: [th.accent.r, th.accent.g, th.accent.b, 1.0],
-            radius: RADIUS * s * zoom,
-            sel_radius: 12.0 * s * zoom,
+            radius: RADIUS * th.round * s * zoom,
+            sel_radius: 12.0 * th.round * s * zoom,
             sel_alpha: if self.items.is_empty() { 0.0 } else { 1.0 },
             opacity: self.opacity.x.clamp(0.0, 1.0),
             light: [lx / ll, ly / ll],
@@ -1640,7 +1660,7 @@ impl App {
         let area = Rect::new(x, M + 18.0, cw, (h - info_h - 30.0).max(40.0));
 
         if !p.lines.is_empty() {
-            g.fill_round(area, 10.0, if th.dark { Color::rgba(0.0, 0.0, 0.0, 0.22) } else { Color::rgba(1.0, 1.0, 1.0, 0.45) });
+            g.fill_round(area, 10.0 * th.round, if th.dark { Color::rgba(0.0, 0.0, 0.0, 0.22) } else { Color::rgba(1.0, 1.0, 1.0, 0.45) });
             g.push_clip(Rect::new(area.x + 10.0, area.y + 8.0, area.w - 20.0, area.h - 16.0));
             for (i, line) in p.lines.iter().enumerate() {
                 let ly = area.y + 8.0 + i as f32 * 15.0;

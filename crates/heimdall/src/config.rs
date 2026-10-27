@@ -22,6 +22,10 @@ pub struct Config {
     pub glass: String,
     /// Shadow under the panel: "normal", "soft" or "off".
     pub shadow: String,
+    /// Corner shape: "round", "windows" (Windows 11's smaller radius) or "square".
+    pub corners: String,
+    /// Animate opening, resizing and moving the selection.
+    pub animations: bool,
     /// Width of the search panel in DIPs.
     pub width: f32,
     pub max_results: usize,
@@ -52,6 +56,8 @@ impl Default for Config {
             accent: "system".into(),
             glass: "liquid".into(),
             shadow: "normal".into(),
+            corners: "round".into(),
+            animations: true,
             width: 680.0,
             max_results: 8,
             show_recent: true,
@@ -79,6 +85,8 @@ const HEADER: &str = "\
 # accent       \"system\" or \"#RRGGBB\"
 # glass        \"liquid\" | \"auto\" (follow Windows transparency) | \"solid\"
 # shadow       \"normal\" | \"soft\" | \"off\"
+# corners      \"round\" | \"windows\" (like Windows 11) | \"square\"
+# animations   false makes everything appear instantly
 # tray         show an icon in the notification area
 # [[web]]      prefix searches: type `g rust lifetimes`
 

@@ -78,6 +78,8 @@ pub enum Setting {
     Theme,
     Glass,
     Shadow,
+    Corners,
+    Animations,
     Recent,
     GameMode,
 }
