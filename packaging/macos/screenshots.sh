@@ -20,6 +20,14 @@ shot() {
     sleep 1
 }
 
+# CI Macs may have Reduce Transparency on, which makes every glass and blur
+# view opaque, ours included. Report it and try to turn it off.
+echo "--- reduce transparency: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+defaults write com.apple.universalaccess reduceTransparency -bool false 2>&1 || true
+echo "--- after trying to turn it off: $(defaults read com.apple.universalaccess reduceTransparency 2>&1)"
+killall Dock SystemUIServer 2>/dev/null
+sleep 3
+
 # Something colourful behind the panel, so the glass shows: the same
 # picture as the Windows screenshot in the README.
 open -a Preview docs/glass.png
