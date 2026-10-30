@@ -39,5 +39,10 @@ for theme in light dark; do
     shot "$theme-tips" --query "?"
     shot "$theme-files" --query "Info.plist"
 done
+# Apple's standard glass and the solid panel, for comparison.
+for glass in auto solid; do
+    sed -i '' "s/^glass = .*/glass = \"$glass\"/" "$config"
+    shot "dark-apps-$glass" --query "te"
+done
 osascript -e 'quit app "Preview"' 2>/dev/null
 ls -la "$out"

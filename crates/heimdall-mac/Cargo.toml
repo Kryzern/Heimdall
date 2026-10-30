@@ -10,6 +10,12 @@ authors.workspace = true
 name = "heimdall-mac"
 path = "src/main.rs"
 
+[features]
+# Turn Objective-C exceptions into readable panics (logged to heimdall.log).
+# Needs a C compiler for the target, so CI builds with it and local cross
+# checks from Windows don't.
+objc-exceptions = ["objc2/catch-all"]
+
 [dependencies]
 heimdall-core.workspace = true
 heimdall-common.workspace = true

@@ -136,6 +136,8 @@ pub struct App {
     mtm: MainThreadMarker,
     panel: Retained<Panel>,
     view: Retained<HeimdallView>,
+    /// Liquid Glass, on macOS 26 and later.
+    liquid: Option<Retained<NSGlassEffectView>>,
     status: Option<Retained<NSStatusItem>>,
     cfg: Config,
     loader: config::Loader,
@@ -187,7 +189,13 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(mtm: MainThreadMarker, panel: Retained<Panel>, view: Retained<HeimdallView>, first_query: Option<String>) -> App {
+    pub fn new(
+        mtm: MainThreadMarker,
+        panel: Retained<Panel>,
+        view: Retained<HeimdallView>,
+        liquid: Option<Retained<NSGlassEffectView>>,
+        first_query: Option<String>,
+    ) -> App {
         let mut loader = config::Loader::new();
         let cfg = loader.poll().unwrap_or_default();
         platform::set_autostart(cfg.start_with_windows);
@@ -197,6 +205,7 @@ impl App {
             mtm,
             panel,
             view,
+            liquid,
             status: None,
             theme,
             hotkey_ok: false,
@@ -297,7 +306,7 @@ impl App {
             self.sync_tray();
         }
         platform::set_theme(&self.panel, &self.cfg.theme);
-        self.theme = Theme::new(platform::is_dark(&self.panel));
+        self.apply_look();
         if self.apps_at.elapsed().as_secs() > 600 {
             self.load_apps();
         }
@@ -722,16 +731,27 @@ impl App {
             Setting::Animations => c.animations = !c.animations,
             Setting::Recent => c.show_recent = !c.show_recent,
             Setting::ClearOnClose => c.clear_on_close = !c.clear_on_close,
-            Setting::Glass | Setting::Shadow | Setting::Corners | Setting::GameMode => {}
+            Setting::Glass => cycle(&mut c.glass, &["liquid", "auto", "solid"]),
+            Setting::Shadow | Setting::Corners | Setting::GameMode => {}
         }
         if s != Setting::Hotkey {
             self.save_config();
             self.sync_tray();
         }
-        platform::set_theme(&self.panel, &self.cfg.theme);
-        self.theme = Theme::new(platform::is_dark(&self.panel));
+        self.apply_look();
         self.refresh();
         self.select_key(key);
+    }
+
+    /// Theme and glass from the config. "liquid" is Apple's clear glass under
+    /// the same tint as the Windows panel, "auto" the standard glass, and
+    /// "solid" is opaque.
+    fn apply_look(&mut self) {
+        platform::set_theme(&self.panel, &self.cfg.theme);
+        self.theme = Theme::new(platform::is_dark(&self.panel));
+        if let Some(g) = &self.liquid {
+            g.setStyle(if self.cfg.glass == "auto" { NSGlassEffectViewStyle::Regular } else { NSGlassEffectViewStyle::Clear });
+        }
     }
 
     /// A key arrived while recording a new hotkey.
@@ -1014,7 +1034,13 @@ impl App {
         };
 
         // A light veil over the system glass, and a rim like the Windows panel's.
-        let veil = if th.dark { (0.06, 0.065, 0.08, 0.22) } else { (0.985, 0.985, 0.99, 0.10) };
+        // The Windows shader's tints, over the glass or as the solid panel.
+        let veil = match (th.dark, self.cfg.glass != "solid") {
+            (true, true) => (0.06, 0.065, 0.08, 0.30),
+            (true, false) => (0.115, 0.12, 0.135, 1.0),
+            (false, true) => (0.985, 0.985, 0.99, 0.12),
+            (false, false) => (0.955, 0.957, 0.965, 1.0),
+        };
         out.push(Cmd::Fill { r: Rect::new(0.0, 0.0, w, h), radius: RADIUS, color: veil });
         let rim = if th.dark { (1.0, 1.0, 1.0, 0.14) } else { (1.0, 1.0, 1.0, 0.55) };
         out.push(Cmd::Stroke { r: Rect::new(0.0, 0.0, w, h), radius: RADIUS, color: rim, width: 1.0 });

@@ -365,6 +365,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, ha
         ("Open at login", "Start in the background when you log in".into(), "arrow.up.forward.app", S::Autostart, on(cfg.start_with_windows)),
         ("Menu bar icon", "Show Heimdall in the menu bar".into(), "menubar.rectangle", S::Tray, on(cfg.tray)),
         ("Theme", "System, dark or light".into(), "circle.lefthalf.filled", S::Theme, cap(&cfg.theme)),
+        ("Glass", "Liquid, auto (Apple's standard glass) or solid".into(), "circle.lefthalf.filled", S::Glass, cap(&cfg.glass)),
         ("Animations", "Turn off to make everything appear instantly".into(), "sparkles", S::Animations, on(cfg.animations)),
         ("Recent items", "Show recent files when the search box is empty".into(), "clock", S::Recent, on(cfg.show_recent)),
         ("Clear search on close", "Open with an empty search box every time".into(), "xmark.circle", S::ClearOnClose, on(cfg.clear_on_close)),

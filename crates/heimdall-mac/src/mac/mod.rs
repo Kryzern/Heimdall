@@ -228,6 +228,12 @@ fn already_running() -> bool {
 }
 
 pub fn run() {
+    // There's no terminal to print to when launched from Finder: keep the
+    // reason for a crash in heimdall.log.
+    std::panic::set_hook(Box::new(|info| {
+        heimdall_common::log(format!("crash: {info}"));
+        eprintln!("{info}");
+    }));
     let mtm = MainThreadMarker::new().expect("Heimdall must start on the main thread");
     let nsapp = NSApplication::sharedApplication(mtm);
     // No Dock icon and no menu bar: a menu bar icon and a hotkey are enough.
@@ -263,10 +269,12 @@ pub fn run() {
     view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
 
     // macOS 26 has Liquid Glass; earlier versions get the frosted material.
+    let mut liquid = None;
     let content: Retained<NSView> = if AnyClass::get(c"NSGlassEffectView").is_some() {
         let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         glass.setCornerRadius(app::RADIUS);
         glass.setContentView(Some(&view));
+        liquid = Some(glass.clone());
         Retained::into_super(glass)
     } else {
         let fx = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
@@ -279,7 +287,7 @@ pub fn run() {
     };
     panel.setContentView(Some(&content));
 
-    let state = App::new(mtm, panel, view, query);
+    let state = App::new(mtm, panel, view, liquid, query);
     APP.with(|a| *a.borrow_mut() = Some(state));
     let item = status_item(mtm);
     with_app(|a| a.set_status_item(item));

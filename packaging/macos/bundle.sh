@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 export MACOSX_DEPLOYMENT_TARGET=11.0
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-    cargo build --release -p heimdall-mac --target "$target"
+    cargo build --release -p heimdall-mac --features objc-exceptions --target "$target"
 done
 app=dist/Heimdall.app
 rm -rf "$app"
