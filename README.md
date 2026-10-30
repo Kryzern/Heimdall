@@ -51,6 +51,14 @@ Heimdall sits somewhere in between. It's two native executables, under 2 MB toge
 
 Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 came straight from your comments and issues.
 
+## What's new in 1.0.4
+
+- **The Windows key can open Heimdall.** Type `settings`, select Hotkey, press Enter and then tap <kbd>Win</kbd> on its own. Heimdall opens instead of the Start menu, and shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> still work.
+- **Control Panel search.** Type `power options`, `credential manager` or `firewall`, panels your drivers add show up too.
+- **Pin to top.** Right-click any result and pin it, pinned items sit above your recent ones.
+- **Quick notes.** Type `note call the dentist` and it's added to a Markdown file, point `notes` in the config at your Obsidian inbox if you like.
+- **Clear recent items** and **Clear search on close** in settings.
+
 ## What's new in 1.0.3
 
 - **Leave folders and drives out of search.** Add them to `exclude` in the config, like `exclude = ['D:', 'C:\Windows', 'node_modules']`, or type `-in:node_modules` for a single search.
@@ -78,7 +86,7 @@ Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 c
 
 ## Install
 
-1. Download `Heimdall-1.0.3-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
+1. Download `Heimdall-1.0.4-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
 2. Press <kbd>Alt</kbd> + <kbd>Space</kbd>.
 
 The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu and the tray, starts it, and sets it to start with Windows.
@@ -97,7 +105,7 @@ If you say no to the admin prompt, that's completely fine, Heimdall still works 
 <summary><b>Without the installer</b></summary>
 <br>
 
-The release also has `Heimdall-1.0.3-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
+The release also has `Heimdall-1.0.4-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
 
 </details>
 
