@@ -12,7 +12,7 @@ mod sources;
 use app::{App, Key};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, AllocAnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::*;
 use objc2_foundation::*;
 use std::cell::{Cell, RefCell};
@@ -205,12 +205,14 @@ fn status_item(mtm: MainThreadMarker) -> Retained<NSStatusItem> {
 /// (rather than rounding its layer) also gives the window a rounded shadow.
 fn corner_mask(radius: f64) -> Retained<NSImage> {
     let side = radius * 2.0 + 1.0;
-    let handler = block2::RcBlock::new(move |rect: NSRect| -> objc2::runtime::Bool {
-        NSColor::blackColor().setFill();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
-        objc2::runtime::Bool::YES
-    });
-    let img = NSImage::imageWithSize_flipped_drawingHandler(NSSize::new(side, side), false, &handler);
+    let size = NSSize::new(side, side);
+    let img = NSImage::initWithSize(NSImage::alloc(), size);
+    #[allow(deprecated)]
+    img.lockFocus();
+    NSColor::blackColor().setFill();
+    NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(NSRect::new(NSPoint::new(0.0, 0.0), size), radius, radius).fill();
+    #[allow(deprecated)]
+    img.unlockFocus();
     img.setCapInsets(NSEdgeInsets { top: radius, left: radius, bottom: radius, right: radius });
     img.setResizingMode(NSImageResizingMode::Stretch);
     img
@@ -231,8 +233,11 @@ pub fn run() {
     // There's no terminal to print to when launched from Finder: keep the
     // reason for a crash in heimdall.log.
     std::panic::set_hook(Box::new(|info| {
-        heimdall_common::log(format!("crash: {info}"));
-        eprintln!("{info}");
+        let trace = std::backtrace::Backtrace::force_capture();
+        heimdall_common::log(format!("crash: {info}
+{trace}"));
+        eprintln!("{info}
+{trace}");
     }));
     let mtm = MainThreadMarker::new().expect("Heimdall must start on the main thread");
     let nsapp = NSApplication::sharedApplication(mtm);
