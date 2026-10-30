@@ -133,9 +133,11 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 | `notes -in:node_modules` | Leave a folder, path or drive out of the results (`-in:D:`, `-in:"C:\Program Files"`) |
 | `holiday type:image` | File types: `image`, `video`, `audio`, `doc`, `code`, `archive`, `app` |
 | `bluetooth`, `dark mode` | Windows settings pages, and tools like Device Manager |
+| `power options`, `credential` | Control Panel, including panels your drivers add |
 | `heimdall\src main` | Path fragments: `main` somewhere under a `heimdall\src` folder |
 | `2^10 * 3` | Calculator, Enter copies the answer |
 | `b64 hello`, `b64d aGVsbG8=` | Base64 encode and decode, Enter copies the result |
+| `note call the dentist` | Adds a timestamped line to your notes file, like an Obsidian inbox |
 | `>` | Open windows, pick one to switch to it |
 | `C:\Us` or `~\Doc` | Browse folders, Tab completes |
 | `g rust lifetimes` | Web search with a prefix (`g`, `ddg`, `yt`, `gh`, `wiki`, or your own) |
@@ -153,7 +155,7 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 | <kbd>Shift</kbd> + <kbd>Space</kbd> | Preview: thumbnail, text, or folder contents |
 | <kbd>Tab</kbd> | Put the selected folder's path in the search box |
 | <kbd>Ctrl</kbd> + <kbd>C</kbd> | Copy the selected path |
-| Right-click, <kbd>Shift</kbd> + <kbd>F10</kbd> | Open with, Open file location, Copy path, Properties, Run as administrator |
+| Right-click, <kbd>Shift</kbd> + <kbd>F10</kbd> | Open with, Open file location, Pin to top, Copy path, Properties, Run as administrator |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Delete</kbd> | Forget the selected item from history |
 | <kbd>Esc</kbd> | Close preview, then clear, then hide |
 
@@ -161,12 +163,12 @@ You can also drag any file result straight into another app.
 
 ## Settings
 
-Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Theme, glass, shadow, corners, animations, the tray icon and starting with Windows all change with one Enter each.
+Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Press <kbd>Win</kbd> on its own there to open Heimdall instead of the Start menu, Win shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> keep working. Theme, glass, shadow, corners, animations, the tray icon, starting with Windows and clearing the search on close all change with one Enter each. **Clear recent items** is there too, pinned items stay.
 
 Everything else lives in `%APPDATA%\Heimdall\config.toml`, which gets created the first time Heimdall runs. Changes there apply the next time Heimdall opens.
 
 ```toml
-hotkey = "Alt+Space"          # or "F5", "Ctrl+Shift+K", ...
+hotkey = "Alt+Space"          # or "F5", "Ctrl+Shift+K", "Win" ...
 passthrough = ["chrome.exe"]  # apps where the hotkey keeps its normal meaning
 game_mode = true              # release the hotkey while a fullscreen game has focus
 theme = "system"              # "dark" or "light"
@@ -179,6 +181,8 @@ exclude = ['D:', 'C:\Windows', 'node_modules']  # left out of file search
 width = 680.0
 max_results = 8
 show_recent = true
+clear_on_close = false        # open with an empty search box
+notes = 'D:\Vault\Inbox.md'   # where `note ...` goes, Documents\Heimdall notes.md by default
 start_with_windows = true
 tray = true                   # icon in the notification area
 

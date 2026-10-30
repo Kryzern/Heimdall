@@ -7,7 +7,8 @@ use std::time::SystemTime;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Global hotkey, e.g. "Alt+Space", "F5", "Ctrl+Shift+K".
+    /// Global hotkey, e.g. "Alt+Space", "F5", "Ctrl+Shift+K", or "Win" to
+    /// open Heimdall instead of the Start menu.
     pub hotkey: String,
     /// Executables (e.g. "chrome.exe") in which the hotkey is released so the
     /// key keeps its normal meaning there.
@@ -34,6 +35,11 @@ pub struct Config {
     pub max_results: usize,
     /// Show recent items when the search box is empty.
     pub show_recent: bool,
+    /// Start with an empty search box instead of the last search.
+    pub clear_on_close: bool,
+    /// Markdown file that `note ...` appends to. Empty means
+    /// Documents\Heimdall notes.md.
+    pub notes: String,
     pub start_with_windows: bool,
     /// Show an icon in the notification area.
     pub tray: bool,
@@ -65,6 +71,8 @@ impl Default for Config {
             width: 680.0,
             max_results: 8,
             show_recent: true,
+            clear_on_close: false,
+            notes: String::new(),
             start_with_windows: true,
             tray: true,
             web: vec![
@@ -82,7 +90,7 @@ const HEADER: &str = "\
 # Heimdall configuration. Saved changes apply the next time Heimdall opens.
 # Most of these can also be changed from Heimdall itself: type `settings`.
 #
-# hotkey       e.g. \"Alt+Space\", \"F5\", \"Ctrl+Shift+K\"
+# hotkey       e.g. \"Alt+Space\", \"F5\", \"Ctrl+Shift+K\", or \"Win\" to replace the Start menu
 # passthrough  apps where the hotkey keeps its normal meaning, e.g. [\"chrome.exe\"]
 # game_mode    release the hotkey while a fullscreen game or video has focus
 # theme        \"system\" | \"dark\" | \"light\"
@@ -94,6 +102,8 @@ const HEADER: &str = "\
 # exclude      left out of file search: drives, folders or folder names anywhere,
 #              e.g. ['D:', 'C:\\Windows', 'node_modules'] (single quotes keep the \\ as is)
 # tray         show an icon in the notification area
+# clear_on_close  open with an empty search box instead of the last search
+# notes        Markdown file that `note ...` appends to, e.g. 'D:\\Vault\\Inbox.md'
 # [[web]]      prefix searches: type `g rust lifetimes`
 
 ";
@@ -146,6 +156,12 @@ pub fn save(c: &Config) {
     if let Ok(body) = toml::to_string_pretty(c) {
         std::fs::write(path(), format!("{HEADER}{body}")).ok();
     }
+}
+
+/// "Win" on its own: opens Heimdall instead of the Start menu. That can't be a
+/// RegisterHotKey hotkey, so it goes through a keyboard hook instead.
+pub fn is_win_key(s: &str) -> bool {
+    matches!(s.trim().to_ascii_lowercase().as_str(), "win" | "windows" | "super")
 }
 
 /// Parse "Ctrl+Shift+K" into (MOD_* flags, virtual-key code).
@@ -252,6 +268,7 @@ mod tests {
         assert_eq!(parse_hotkey("Alt+Space"), Some((1, 0x20)));
         assert_eq!(parse_hotkey("Ctrl+Shift+K"), Some((6, 0x4B)));
         assert_eq!(parse_hotkey("Ctrl+"), None);
+        assert!(is_win_key("Win") && is_win_key(" windows ") && !is_win_key("Win+K"));
     }
 
     #[test]

@@ -269,3 +269,9 @@ pub fn pretty_path(path: &str) -> String {
 pub fn hstring(s: &str) -> HSTRING {
     HSTRING::from(s)
 }
+
+/// Local time as "2026-10-30 14:05", for notes.
+pub fn local_timestamp() -> String {
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!("{}-{:02}-{:02} {:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute)
+}

@@ -1,7 +1,7 @@
 //! The launcher window: state, input, layout, animation and drawing.
 
 use crate::actions;
-use crate::apps::App as AppEntry;
+use crate::apps::{App as AppEntry, Applet};
 use crate::config::{self, Config};
 use crate::edit::Edit;
 use crate::files::FileSearch;
@@ -46,6 +46,8 @@ const G_OPEN_WITH: char = '\u{E7AC}';
 const G_COPY: char = '\u{E8C8}';
 const G_INFO: char = '\u{E946}';
 const G_CLOSE: char = '\u{E8BB}';
+const G_PIN: char = '\u{E718}';
+const G_UNPIN: char = '\u{E77A}';
 
 /// Things the action menu can do to a result.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,6 +56,7 @@ enum Act {
     Admin,
     Location,
     OpenWith,
+    Pin,
     CopyPath,
     Properties,
     Close,
@@ -215,6 +218,7 @@ pub struct App {
     files_pending: bool,
 
     apps: Vec<AppEntry>,
+    applets: Vec<Applet>,
     apps_at: Option<Instant>,
     recent: Vec<String>,
     history: History,
@@ -273,8 +277,9 @@ impl App {
         let (dtx, done) = channel();
         let fast = Worker::spawn("icons", hwnd, dtx.clone());
         let slow = Worker::spawn("shell", hwnd, dtx);
+        let history = History::load();
         slow.send(Job::Apps);
-        slow.send(Job::Recent);
+        slow.send(Job::Recent { after: history.cleared });
         platform::set_autostart(cfg.start_with_windows);
         let gfx = match Gfx::new(hwnd, 64, 64) {
             Ok(g) => Some(g),
@@ -304,9 +309,10 @@ impl App {
             qid: 0,
             files_pending: false,
             apps: Vec::new(),
+            applets: Vec::new(),
             apps_at: Some(Instant::now()),
             recent: Vec::new(),
-            history: History::load(),
+            history,
             files: FileSearch::start(hwnd),
             fast,
             slow,
@@ -350,7 +356,10 @@ impl App {
             return;
         }
         unsafe {
-            if on {
+            if on && config::is_win_key(&self.cfg.hotkey) {
+                self.hotkey_registered = crate::winkey::set(self.hwnd, true);
+            } else if on {
+                crate::winkey::set(self.hwnd, false);
                 match config::parse_hotkey(&self.cfg.hotkey) {
                     Some((mods, vk)) => {
                         let ok = RegisterHotKey(Some(self.hwnd), HOTKEY_ID, HOT_KEY_MODIFIERS(mods | MOD_NOREPEAT.0), vk);
@@ -362,6 +371,8 @@ impl App {
                     None => crate::log(format!("unrecognised hotkey {:?}", self.cfg.hotkey)),
                 }
             } else {
+                // Either kind may be active after the config changed underneath.
+                crate::winkey::set(self.hwnd, false);
                 UnregisterHotKey(Some(self.hwnd), HOTKEY_ID).ok();
                 self.hotkey_registered = false;
             }
@@ -451,7 +462,11 @@ impl App {
         self.frame_pending = false;
         self.on_shell();
         self.on_files();
-        self.edit.select_all();
+        if self.cfg.clear_on_close {
+            self.edit.clear();
+        } else {
+            self.edit.select_all();
+        }
         self.preview_on = false;
         self.pw.snap(0.0);
         self.confirm_key = None;
@@ -483,7 +498,7 @@ impl App {
             self.apps_at = Some(Instant::now());
             self.slow.send(Job::Apps);
         }
-        self.slow.send(Job::Recent);
+        self.slow.send(Job::Recent { after: self.history.cleared });
         self.kick();
     }
 
@@ -525,21 +540,30 @@ impl App {
         let q = self.edit.text.clone();
         if self.settings_page {
             self.mode = Mode::Settings;
-            self.instant_rows = sources::settings(&q, &self.cfg, self.recording, self.notice.as_deref());
+            let has_recent = self.history.len() > 0 || !self.recent.is_empty();
+            self.instant_rows = sources::settings(&q, &self.cfg, self.recording, self.notice.as_deref(), has_recent);
             self.file_rows.clear();
             self.files_pending = false;
             self.merge(true);
             return;
         }
         self.mode = sources::mode(&q);
-        let ctx = Ctx { apps: &self.apps, cfg: &self.cfg, service: self.files.status.service.load(Ordering::Relaxed) };
+        let ctx = Ctx {
+            apps: &self.apps,
+            applets: &self.applets,
+            cfg: &self.cfg,
+            service: self.files.status.service.load(Ordering::Relaxed),
+        };
         let (items, want_files) = sources::instant(&q, &ctx, self.hwnd);
         self.instant_rows = items;
-        if self.mode == Mode::Recent && self.cfg.show_recent {
-            let mut rows = self.history.top(5);
-            for r in sources::recent_items(&self.recent) {
-                if !rows.iter().any(|x| x.key == r.key) {
-                    rows.push(r);
+        if self.mode == Mode::Recent {
+            // Pins first, then (if they're on) the most used and recent files.
+            let mut rows = self.history.pins();
+            if self.cfg.show_recent {
+                for r in self.history.top(5).into_iter().chain(sources::recent_items(&self.recent)) {
+                    if !rows.iter().any(|x| x.key == r.key) {
+                        rows.push(r);
+                    }
                 }
             }
             rows.truncate(self.max_rows());
@@ -634,14 +658,20 @@ impl App {
                     self.preview = Some(PreviewView { data: p, bmp });
                     self.kick();
                 }
-                Done::Apps(apps) => {
+                Done::Apps(apps, applets) => {
                     if apps.is_empty() {
                         crate::log("apps: none found");
                     }
                     self.apps = apps;
+                    self.applets = applets;
                     if self.visible && self.mode == Mode::Normal {
                         let q = self.edit.text.clone();
-                        let ctx = Ctx { apps: &self.apps, cfg: &self.cfg, service: self.files.status.service.load(Ordering::Relaxed) };
+                        let ctx = Ctx {
+                            apps: &self.apps,
+                            applets: &self.applets,
+                            cfg: &self.cfg,
+                            service: self.files.status.service.load(Ordering::Relaxed),
+                        };
                         self.instant_rows = sources::instant(&q, &ctx, self.hwnd).0;
                         self.merge(false);
                     }
@@ -806,8 +836,17 @@ impl App {
                 self.refresh();
                 return;
             }
+            Action::Note(text) => {
+                if let Err(e) = sources::save_note(&self.cfg, text) {
+                    crate::log(format!("note: {e}"));
+                    self.edit.set(&format!("Couldn't save the note: {e}"));
+                    self.edit.select_all();
+                    self.refresh();
+                    return;
+                }
+            }
         }
-        if !matches!(it.action, Action::Window(_) | Action::Heimdall(_)) {
+        if !matches!(it.action, Action::Window(_) | Action::Heimdall(_) | Action::Note(_)) {
             self.history.record(&q, &it);
         }
         if hide {
@@ -865,6 +904,16 @@ impl App {
                     }
                 }
             }
+            Internal::ClearRecent => {
+                let key = self.items.get(self.sel).map(|i| i.key.clone());
+                self.history.clear();
+                self.history.save();
+                self.recent.clear();
+                self.slow.send(Job::Recent { after: self.history.cleared });
+                self.refresh();
+                self.select_key(key);
+                return false;
+            }
             Internal::ImportFlow => {
                 let added = crate::flow::import(&mut self.cfg);
                 config::save(&self.cfg);
@@ -918,6 +967,8 @@ impl App {
                 self.notice = None;
                 // Unregister so pressing the current hotkey arrives here as keys.
                 self.set_hotkey(false);
+                // Win on its own never arrives as a key: the hook reports it.
+                crate::winkey::set(self.hwnd, true);
             }
             Setting::Autostart => {
                 c.start_with_windows = !c.start_with_windows;
@@ -930,6 +981,7 @@ impl App {
             Setting::Corners => cycle(&mut c.corners, &["round", "windows", "square"]),
             Setting::Animations => c.animations = !c.animations,
             Setting::Recent => c.show_recent = !c.show_recent,
+            Setting::ClearOnClose => c.clear_on_close = !c.clear_on_close,
             Setting::GameMode => c.game_mode = !c.game_mode,
         }
         if s != Setting::Hotkey {
@@ -979,6 +1031,23 @@ impl App {
         self.select_key(key);
     }
 
+    /// Win was tapped on its own: the hotkey, or a new hotkey being recorded.
+    fn win_tapped(&mut self) {
+        if !self.recording {
+            self.toggle();
+            return;
+        }
+        let key = self.items.get(self.sel).map(|i| i.key.clone());
+        self.recording = false;
+        self.notice = None;
+        self.cfg.hotkey = "Win".into();
+        self.set_hotkey(true);
+        self.save_config();
+        self.sync_tray();
+        self.refresh();
+        self.select_key(key);
+    }
+
     // ---- action menu -------------------------------------------------------
 
     /// Right-click on a row, Shift+F10 or the menu key. `at` is a screen point,
@@ -1017,6 +1086,13 @@ impl App {
                 }
                 if it.kind == Kind::File {
                     rows.push(Some((Act::OpenWith, G_OPEN_WITH, "Open with\u{2026}", "")));
+                }
+                if !it.key.is_empty() {
+                    rows.push(Some(if self.history.pinned(&it.key) {
+                        (Act::Pin, G_UNPIN, "Unpin", "")
+                    } else {
+                        (Act::Pin, G_PIN, "Pin to top", "")
+                    }));
                 }
                 if it.path.is_some() {
                     rows.push(None);
@@ -1113,6 +1189,13 @@ impl App {
                 if let Some(p) = &path {
                     self.hide();
                     menu::open_with(p);
+                }
+            }
+            Act::Pin => {
+                self.history.toggle_pin(it);
+                self.history.save();
+                if self.mode == Mode::Recent {
+                    self.refresh();
                 }
             }
             Act::CopyPath => {
@@ -1570,9 +1653,12 @@ impl App {
         if n > 0 {
             g.hline(M + 16.0, M + w - 16.0, M + BAR, th.line);
             if self.header_h() > 0.0 {
+                let pinned = self.items.iter().filter(|i| self.history.pinned(&i.key)).count();
                 let header = match self.mode {
                     Mode::Settings => "SETTINGS",
                     Mode::Help => "TIPS",
+                    _ if pinned == self.items.len() => "PINNED",
+                    _ if pinned > 0 => "PINNED AND RECENT",
                     _ => "RECENT",
                 };
                 g.text(header, &g.fonts.header, Rect::new(M + 22.0, M + BAR + PAD, 200.0, HEADER), th.faint);
@@ -1731,6 +1817,7 @@ impl App {
     fn dispatch(&mut self, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         match msg {
             WM_HOTKEY => self.toggle(),
+            crate::winkey::WM_APP_WINKEY => self.win_tapped(),
             WM_KEYDOWN | WM_SYSKEYDOWN if self.recording => self.record_key(wp.0 as u16),
             // No window menu and no beep for Alt+letter.
             WM_SYSCHAR => {}

@@ -55,6 +55,47 @@ fn is_noise(name: &str, id: &str) -> bool {
         || id.ends_with(".pdf")
 }
 
+/// A Control Panel applet ("Power Options", "Credential Manager", a driver's
+/// own panel), from the same All Control Panel Items view Explorer shows, so
+/// names are in the user's language.
+#[derive(Clone, Debug)]
+pub struct Applet {
+    pub name: String,
+    /// `shell:::{26EE0668-...}\0\::{CLSID}`, for launching and the icon.
+    pub uri: String,
+    pub target: Target,
+}
+
+/// Enumerate Control Panel applets. Call on a thread with COM initialised.
+pub fn applets() -> Vec<Applet> {
+    let mut out = Vec::new();
+    unsafe {
+        let Ok(folder) =
+            SHCreateItemFromParsingName::<_, _, IShellItem>(w!("shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0"), None)
+        else {
+            return out;
+        };
+        let Ok(items) = folder.BindToHandler::<_, IEnumShellItems>(None, &BHID_EnumItems) else { return out };
+        loop {
+            let mut batch: [Option<IShellItem>; 64] = std::array::from_fn(|_| None);
+            let mut got = 0u32;
+            if items.Next(&mut batch, Some(&mut got)).is_err() || got == 0 {
+                break;
+            }
+            for item in batch.iter().take(got as usize).flatten() {
+                let name = item.GetDisplayName(SIGDN_NORMALDISPLAY).map(take).unwrap_or_default();
+                let path = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).map(take).unwrap_or_default();
+                if name.is_empty() || !path.starts_with("::") {
+                    continue;
+                }
+                out.push(Applet { target: Target::new(&name), name, uri: format!("shell:{path}") });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
 /// Enumerate apps. Call on a thread with COM initialised.
 pub fn enumerate() -> Vec<App> {
     let mut out = Vec::new();
@@ -97,4 +138,17 @@ pub fn enumerate() -> Vec<App> {
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out.dedup_by(|a, b| a.name == b.name && a.path == b.path);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn control_panel_applets() {
+        unsafe {
+            windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED).ok().ok();
+        }
+        let a = super::applets();
+        assert!(a.len() > 10, "{} applets", a.len());
+        assert!(a.iter().all(|x| x.uri.starts_with("shell:::{") && !x.name.is_empty()));
+    }
 }

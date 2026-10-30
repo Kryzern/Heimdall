@@ -1,5 +1,5 @@
 //! Usage history ("frecency"): how often and how recently each result was
-//! opened, plus which result was picked for which query. Stored locally in
+//! opened, which result was picked for which query, and pinned results. Stored locally in
 //! `%APPDATA%\Heimdall\history.json`; never leaves the machine.
 
 use crate::items::{Action, Icon, Item, Kind};
@@ -22,10 +22,27 @@ struct Pick {
     count: u32,
 }
 
+/// A result pinned to the top of the empty-query view.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Pin {
+    key: String,
+    title: String,
+    subtitle: String,
+    kind: String,
+    target: String,
+    path: Option<String>,
+    glyph: Option<char>,
+}
+
 #[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct History {
     items: HashMap<String, Use>,
     learned: HashMap<String, Pick>,
+    pins: Vec<Pin>,
+    /// Unix time of the last "Clear recent items": Windows' own recent files
+    /// from before then stay hidden.
+    pub cleared: u64,
     #[serde(skip)]
     dirty: bool,
 }
@@ -42,7 +59,17 @@ fn kind_name(k: Kind) -> &'static str {
     match k {
         Kind::App => "app",
         Kind::Folder => "folder",
+        Kind::WinSetting => "setting",
         _ => "file",
+    }
+}
+
+fn kind_from(name: &str) -> Kind {
+    match name {
+        "app" => Kind::App,
+        "folder" => Kind::Folder,
+        "setting" => Kind::WinSetting,
+        _ => Kind::File,
     }
 }
 
@@ -142,14 +169,10 @@ impl History {
         v.into_iter()
             .take(n)
             .map(|(key, u)| {
-                let kind = match u.kind.as_str() {
-                    "app" => Kind::App,
-                    "folder" => Kind::Folder,
-                    _ => Kind::File,
-                };
+                let kind = kind_from(&u.kind);
                 let mut it = Item::new(&u.title, &u.subtitle, kind, Icon::Shell(u.target.clone()), Action::Open(u.target.clone()))
                     .with_key(key.clone());
-                if kind != Kind::App {
+                if matches!(kind, Kind::File | Kind::Folder) {
                     it.path = Some(u.target.clone());
                 }
                 it
@@ -161,5 +184,60 @@ impl History {
         self.items.remove(key);
         self.learned.retain(|_, p| p.key != key);
         self.dirty = true;
+    }
+
+    /// Forget everything except pins.
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.learned.clear();
+        self.cleared = now();
+        self.dirty = true;
+    }
+
+    /// Entries that "Clear recent items" would remove.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn pinned(&self, key: &str) -> bool {
+        self.pins.iter().any(|p| p.key == key)
+    }
+
+    /// Pin a result that opens something, or unpin it if it already is.
+    pub fn toggle_pin(&mut self, item: &Item) {
+        if let Some(i) = self.pins.iter().position(|p| p.key == item.key) {
+            self.pins.remove(i);
+        } else if let (false, Action::Open(target)) = (item.key.is_empty(), &item.action) {
+            self.pins.push(Pin {
+                key: item.key.clone(),
+                title: item.title.clone(),
+                subtitle: item.subtitle.clone(),
+                kind: kind_name(item.kind).into(),
+                target: target.clone(),
+                path: item.path.clone(),
+                glyph: match item.icon {
+                    Icon::Glyph(c) => Some(c),
+                    _ => None,
+                },
+            });
+        } else {
+            return;
+        }
+        self.dirty = true;
+    }
+
+    /// Pinned results, in the order they were pinned.
+    pub fn pins(&self) -> Vec<Item> {
+        self.pins
+            .iter()
+            .map(|p| {
+                let icon = p.glyph.map(Icon::Glyph).unwrap_or_else(|| Icon::Shell(p.target.clone()));
+                let mut it = Item::new(&p.title, &p.subtitle, kind_from(&p.kind), icon, Action::Open(p.target.clone()))
+                    .with_key(p.key.clone());
+                it.path = p.path.clone();
+                it.value = "Pinned".into();
+                it
+            })
+            .collect()
     }
 }

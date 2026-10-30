@@ -16,6 +16,7 @@ mod menu;
 mod platform;
 mod shell;
 mod sources;
+mod winkey;
 
 use app::{App, WM_APP_SHOW};
 use std::cell::RefCell;

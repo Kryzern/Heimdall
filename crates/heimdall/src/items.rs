@@ -7,6 +7,8 @@ pub enum Kind {
     Folder,
     Calc,
     Base64,
+    /// `note ...`: append a line to the notes file.
+    Note,
     Web,
     System,
     Window,
@@ -27,6 +29,7 @@ impl Kind {
             Kind::Folder => "Folder",
             Kind::Calc => "Calculator",
             Kind::Base64 => "Base64",
+            Kind::Note => "Note",
             Kind::Web => "Web",
             Kind::System => "System",
             Kind::Window => "Window",
@@ -66,6 +69,8 @@ pub enum Internal {
     ReloadIndex,
     InstallIndexer,
     ImportFlow,
+    /// Forget usage history and hide older Windows recent files.
+    ClearRecent,
     Set(Setting),
 }
 
@@ -81,6 +86,7 @@ pub enum Setting {
     Corners,
     Animations,
     Recent,
+    ClearOnClose,
     GameMode,
 }
 
@@ -95,6 +101,8 @@ pub enum Action {
     Heimdall(Internal),
     /// Replace the query (tips: `ext:` and friends).
     Insert(String),
+    /// Append this text to the notes file.
+    Note(String),
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +156,7 @@ impl Item {
             Action::Heimdall(Internal::Set(_)) => "Change",
             Action::System(_) | Action::Heimdall(_) => "Run",
             Action::Insert(_) => "Use",
+            Action::Note(_) => "Save",
             Action::Open(_) => match self.kind {
                 Kind::App => "Launch",
                 _ => "Open",

@@ -2,7 +2,7 @@
 //! calculator, system commands, web searches, open windows and path browsing.
 
 use crate::actions::url_encode;
-use crate::apps::App;
+use crate::apps::{App, Applet};
 use crate::config::Config;
 use crate::items::*;
 use crate::items::Setting as S;
@@ -34,6 +34,8 @@ const G_RECENT: char = '\u{E823}';
 const G_GAME: char = '\u{E7FC}';
 const G_TIP: char = '\u{E82F}';
 const G_FILTER: char = '\u{E71C}';
+const G_NOTE: char = '\u{E70B}';
+const G_CLEAR: char = '\u{E894}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -75,6 +77,7 @@ fn is_path(t: &str) -> bool {
 
 pub struct Ctx<'a> {
     pub apps: &'a [App],
+    pub applets: &'a [Applet],
     pub cfg: &'a Config,
     pub service: bool,
 }
@@ -111,6 +114,24 @@ pub fn instant(q: &str, ctx: &Ctx, own: HWND) -> (Vec<Item>, bool) {
                 Some(Some(s)) => Item::new(&s, "Base64 decoded  ·  Enter to copy", Kind::Base64, Icon::Glyph(G_CODE), Action::Copy(s.clone())),
                 Some(None) => Item::new("Not valid Base64 text", rest, Kind::Base64, Icon::Glyph(G_CODE), Action::Insert(q.to_string())),
             };
+            out.push(it);
+            return (out, false);
+        }
+    }
+
+    // Quick note: `note call the dentist` appends a line to the notes file.
+    if let Some((key, rest)) = q.split_once(' ') {
+        let rest = rest.trim();
+        if key.eq_ignore_ascii_case("note") && !rest.is_empty() {
+            let file = notes_path(ctx.cfg);
+            let mut it = Item::new(
+                rest,
+                format!("Add to {}", platform::file_name(&file)),
+                Kind::Note,
+                Icon::Glyph(G_NOTE),
+                Action::Note(rest.to_string()),
+            );
+            it.score = 9500;
             out.push(it);
             return (out, false);
         }
@@ -201,6 +222,7 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
     }
 
     win_settings(q, out);
+    applets(q, ctx.applets, out);
 
     let mut own: Vec<(&str, &str, Internal)> = vec![
         ("Heimdall: Settings", "heimdall settings preferences hotkey shortcut theme", Internal::Settings),
@@ -342,6 +364,59 @@ fn win_settings(q: &str, out: &mut Vec<Item>) {
     }
 }
 
+/// Control Panel applets, matched on their title the same way as settings
+/// pages, and ranked just below a settings page with the same name.
+fn applets(q: &str, applets: &[Applet], out: &mut Vec<Item>) {
+    let floor = if q.chars().count() < 3 { 600 } else { 450 };
+    for a in applets {
+        // Already listed as a Windows tool, e.g. Device Manager.
+        if WIN_SETTINGS.iter().any(|(t, target, ..)| !target.contains(':') && t.eq_ignore_ascii_case(&a.name)) {
+            continue;
+        }
+        let Some((score, pos)) = fuzzy_words(q, &a.target).filter(|(s, _)| *s >= floor) else { continue };
+        let mut it = Item::new(&a.name, "Control Panel", Kind::WinSetting, Icon::Shell(a.uri.clone()), Action::Open(a.uri.clone()))
+            .with_key(format!("cp:{}", a.uri.to_lowercase()));
+        it.score = score - 55;
+        it.hl = ranges16(&a.name, &pos);
+        out.push(it);
+    }
+}
+
+/// Where `note ...` writes: the configured file, or Documents\Heimdall notes.md.
+pub fn notes_path(cfg: &Config) -> String {
+    if !cfg.notes.trim().is_empty() {
+        return expand_home(cfg.notes.trim());
+    }
+    let docs = std::env::var_os("USERPROFILE").map(|h| format!("{}\\Documents", h.to_string_lossy())).unwrap_or_default();
+    format!("{docs}\\Heimdall notes.md")
+}
+
+/// Append `text` to the notes file as a timestamped Markdown list item.
+pub fn save_note(cfg: &Config, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = notes_path(cfg);
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    // Start on a fresh line if the file doesn't end with one.
+    let len = f.metadata()?.len();
+    let lead = if len > 0 && !ends_with_newline(&path) { "\n" } else { "" };
+    writeln!(f, "{lead}- {} {text}", platform::local_timestamp())
+}
+
+fn ends_with_newline(path: &str) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut last = [0u8; 1];
+    std::fs::File::open(path)
+        .and_then(|mut f| {
+            f.seek(SeekFrom::End(-1))?;
+            f.read_exact(&mut last)
+        })
+        .map(|_| last[0] == b'\n')
+        .unwrap_or(true)
+}
+
 /// The `?` page: what you can type.
 fn tips() -> Vec<Item> {
     let rows: &[(&str, &str, char, &str)] = &[
@@ -356,6 +431,7 @@ fn tips() -> Vec<Item> {
         ("g rust lifetimes", "Search the web with a prefix: g, ddg, yt, gh, wiki", G_GLOBE, "g "),
         ("2 * (3 + 4)", "Calculator; Enter copies the answer", G_CALC, ""),
         ("b64 hello", "Base64 encode; b64d decodes. Enter copies it", G_CODE, "b64 "),
+        ("note buy milk", "Add a line to your notes file (notes in the config)", G_NOTE, "note "),
     ];
     let mut out: Vec<Item> = rows
         .iter()
@@ -376,7 +452,7 @@ fn tips() -> Vec<Item> {
 
 /// Heimdall's settings page, filtered by `q`. `recording` and `notice` describe
 /// the hotkey row while a new shortcut is being captured.
-pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) -> Vec<Item> {
+pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, has_recent: bool) -> Vec<Item> {
     let on = |b: bool| if b { "On" } else { "Off" }.to_string();
     let cap = |s: &str| {
         let mut c = s.chars();
@@ -385,7 +461,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) ->
     let hotkey_sub = match (recording, notice) {
         (true, _) => "Press the new shortcut now. Esc cancels.".to_string(),
         (false, Some(n)) => n.to_string(),
-        (false, None) => "The shortcut that opens Heimdall".to_string(),
+        (false, None) => "The shortcut that opens Heimdall. Press Win alone to replace the Start menu".to_string(),
     };
     let hotkey_value = if recording { "\u{2026}".to_string() } else { cfg.hotkey.clone() };
     let rows: Vec<(&str, String, char, Setting, String)> = vec![
@@ -398,6 +474,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) ->
         ("Corners", "Round, Windows (like Windows 11) or square".into(), G_CORNERS, S::Corners, cap(&cfg.corners)),
         ("Animations", "Turn off to make everything appear instantly".into(), G_ANIM, S::Animations, on(cfg.animations)),
         ("Recent items", "Show recent files when the search box is empty".into(), G_RECENT, S::Recent, on(cfg.show_recent)),
+        ("Clear search on close", "Open with an empty search box every time".into(), G_CLEAR, S::ClearOnClose, on(cfg.clear_on_close)),
         ("Game mode", "Release the hotkey while a fullscreen game has focus".into(), G_GAME, S::GameMode, on(cfg.game_mode)),
     ];
     let mut out = Vec::new();
@@ -408,6 +485,19 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>) ->
             .with_key(format!("set:{title}"));
         it.hl = ranges16(title, &pos);
         it.value = value;
+        out.push(it);
+    }
+    let clear = "Clear recent items";
+    if q.trim().is_empty() || fuzzy_words(q, &Target::new(clear)).is_some() {
+        let mut it = Item::new(
+            clear,
+            "Forget recently opened files and folders. Pinned items stay",
+            Kind::Setting,
+            Icon::Glyph(G_RECENT),
+            Action::Heimdall(Internal::ClearRecent),
+        )
+        .with_key("set:clear");
+        it.value = if has_recent { "Clear".into() } else { "Empty".into() };
         out.push(it);
     }
     let edit = "Open config file";
@@ -568,5 +658,29 @@ mod tests {
         assert!(titles("wallpaper").contains(&"Background".to_string()));
         let re = titles("re");
         assert!(re.len() < 6, "{re:?}");
+    }
+
+    #[test]
+    fn notes_append_lines() {
+        let path = std::env::temp_dir().join(format!("heimdall-notes-{}.md", std::process::id()));
+        std::fs::write(&path, "# Inbox").unwrap();
+        let cfg = Config { notes: path.to_string_lossy().into_owned(), ..Config::default() };
+        save_note(&cfg, "first").unwrap();
+        save_note(&cfg, "second").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text:?}");
+        assert!(lines[1].starts_with("- 20") && lines[1].ends_with(" first"));
+        assert!(lines[2].ends_with(" second") && text.ends_with('\n'));
+    }
+
+    #[test]
+    fn note_prefix() {
+        let cfg = Config::default();
+        let ctx = Ctx { apps: &[], applets: &[], cfg: &cfg, service: false };
+        let (rows, files) = instant("note call the dentist", &ctx, HWND::default());
+        assert!(!files);
+        assert!(matches!(&rows[0].action, Action::Note(t) if t == "call the dentist"));
     }
 }

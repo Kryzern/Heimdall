@@ -1,8 +1,8 @@
 //! Background COM workers for slow shell calls: icons, thumbnails, the app
-//! list and recent documents. Results come back over a channel, and the UI
+//! list, Control Panel applets and recent documents. Results come back over a channel, and the UI
 //! thread is nudged with a posted message.
 
-use crate::apps::{self, App};
+use crate::apps::{self, App, Applet};
 use std::sync::mpsc::{channel, Sender};
 use windows::core::{Interface, HSTRING, PWSTR};
 use windows::Win32::Foundation::*;
@@ -24,13 +24,14 @@ pub enum Job {
     Icon { key: String, path: String, px: u32 },
     Preview { path: String, px: u32 },
     Apps,
-    Recent,
+    /// Recent documents opened after this Unix time.
+    Recent { after: u64 },
 }
 
 pub enum Done {
     Icon { key: String, img: Option<Image> },
     Preview(Box<Preview>),
-    Apps(Vec<App>),
+    Apps(Vec<App>, Vec<Applet>),
     Recent(Vec<String>),
 }
 
@@ -50,8 +51,8 @@ impl Worker {
                     let out = match job {
                         Job::Icon { key, path, px } => Done::Icon { key, img: shell_image(&path, px, SIIGBF_ICONONLY) },
                         Job::Preview { path, px } => Done::Preview(Box::new(preview(path, px))),
-                        Job::Apps => Done::Apps(apps::enumerate()),
-                        Job::Recent => Done::Recent(recent_files(16)),
+                        Job::Apps => Done::Apps(apps::enumerate(), apps::applets()),
+                        Job::Recent { after } => Done::Recent(recent_files(16, after)),
                     };
                     if done.send(out).is_err() {
                         break;
@@ -212,7 +213,8 @@ unsafe fn bitmap_pixels(hbmp: HBITMAP) -> Option<Image> {
 }
 
 /// Most recently used documents from the shell's Recent folder, newest first.
-fn recent_files(max: usize) -> Vec<String> {
+fn recent_files(max: usize, after: u64) -> Vec<String> {
+    let after = std::time::UNIX_EPOCH + std::time::Duration::from_secs(after);
     let Some(dir) = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join(r"Microsoft\Windows\Recent")) else {
         return Vec::new();
     };
@@ -221,6 +223,7 @@ fn recent_files(max: usize) -> Vec<String> {
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")))
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .filter(|(t, _)| *t > after)
         .collect();
     links.sort_by(|a, b| b.0.cmp(&a.0));
     let mut out = Vec::new();
