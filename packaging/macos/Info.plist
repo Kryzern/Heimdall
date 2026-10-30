@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.kryzern.heimdall</string>
+    <key>CFBundleName</key>
+    <string>Heimdall</string>
+    <key>CFBundleDisplayName</key>
+    <string>Heimdall</string>
+    <key>CFBundleExecutable</key>
+    <string>Heimdall</string>
+    <key>CFBundleIconFile</key>
+    <string>Heimdall</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT licensed. github.com/Kryzern/Heimdall</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Heimdall indexes file names on your Desktop so you can search for them. Nothing leaves your Mac.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Heimdall indexes file names in Documents so you can search for them. Nothing leaves your Mac.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Heimdall indexes file names in Downloads so you can search for them. Nothing leaves your Mac.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Heimdall asks System Events to restart, shut down or log out, and Finder to empty the Trash, when you pick those commands.</string>
+</dict>
+</plist>

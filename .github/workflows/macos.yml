@@ -1,0 +1,51 @@
+name: macOS
+
+on:
+  push:
+    branches: [macos]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release -p heimdall-core -p heimdall-common -p heimdall-mac
+      - name: Bundle
+        run: sh packaging/macos/bundle.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Heimdall-macos
+          path: dist/*.zip
+      - name: Screenshots
+        run: sh packaging/macos/screenshots.sh
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-macos-15
+          path: dist/screens
+
+  # Liquid Glass only exists on macOS 26: screenshot the same build there.
+  glass:
+    needs: build
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Heimdall-macos
+          path: dist
+      - run: cd dist && ditto -x -k Heimdall-*-macos.zip .
+      - name: Screenshots
+        run: sh packaging/macos/screenshots.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-macos-26
+          path: dist/screens
