@@ -20,8 +20,16 @@ shot() {
     sleep 1
 }
 
+# Something colourful behind the panel, so the glass shows: the same
+# picture as the Windows screenshot in the README.
+open -a Preview docs/glass.png
+sleep 4
+
 # The first run writes the default config and builds the index.
 shot first-run
+echo "--- after the first run:"
+ls -la "$HOME/Library/Application Support/Heimdall" "$HOME/Library/Caches/Heimdall" 2>&1
+cat "$HOME/Library/Application Support/Heimdall/heimdall.log" 2>&1
 for theme in light dark; do
     sed -i '' "s/^theme = .*/theme = \"$theme\"/" "$config"
     shot "$theme-empty"
@@ -31,4 +39,5 @@ for theme in light dark; do
     shot "$theme-tips" --query "?"
     shot "$theme-files" --query "Info.plist"
 done
+osascript -e 'quit app "Preview"' 2>/dev/null
 ls -la "$out"

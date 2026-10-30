@@ -1,4 +1,4 @@
-//! `%APPDATA%\Heimdall\config.toml`, reloaded whenever it changes on disk.
+//! `config.toml` in Heimdall's folder, reloaded whenever it changes on disk.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -108,7 +108,11 @@ const HEADER: &str = "\
 
 ";
 
+/// `%APPDATA%\Heimdall` on Windows, `~/Library/Application Support/Heimdall` on macOS.
 pub fn dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        return crate::home().join("Library/Application Support/Heimdall");
+    }
     std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Heimdall")
 }
 
@@ -279,6 +283,16 @@ mod tests {
         }
         assert_eq!(hotkey_name(0, 0x4B), None);
         assert_eq!(hotkey_name(0, 0x20), None);
+    }
+
+    #[test]
+    fn config_folder() {
+        let d = dir();
+        if cfg!(target_os = "macos") {
+            assert!(d.ends_with("Library/Application Support/Heimdall"), "{d:?}");
+        } else {
+            assert!(d.ends_with("Heimdall"), "{d:?}");
+        }
     }
 
     #[test]

@@ -8,7 +8,11 @@ use objc2_app_kit::*;
 use objc2_foundation::*;
 use std::process::Command;
 
+/// Open a file, folder or app, or a URL like `x-apple.systempreferences:`.
 pub fn open(path: &str) -> bool {
+    if !path.starts_with('/') && path.contains(':') {
+        return open_url(path);
+    }
     let url = NSURL::fileURLWithPath(&NSString::from_str(path));
     NSWorkspace::sharedWorkspace().openURL(&url)
 }
@@ -166,7 +170,13 @@ pub fn set_autostart(on: bool) {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };
-    let exe = exe.to_string_lossy().replace('&', "&amp;").replace('<', "&lt;");
+    let exe = exe.to_string_lossy();
+    // Opened straight from a download, macOS runs a copy from a random path
+    // that's gone after a restart. Wait until it's been moved somewhere real.
+    if exe.contains("/AppTranslocation/") {
+        return;
+    }
+    let exe = exe.replace('&', "&amp;").replace('<', "&lt;");
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

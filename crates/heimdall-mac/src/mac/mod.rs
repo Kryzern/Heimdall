@@ -201,16 +201,19 @@ fn status_item(mtm: MainThreadMarker) -> Retained<NSStatusItem> {
     item
 }
 
-/// Round a layer-backed view's corners.
-fn round_corners(view: &NSView, radius: f64) {
-    view.setWantsLayer(true);
-    unsafe {
-        let layer: Option<Retained<AnyObject>> = msg_send![view, layer];
-        if let Some(l) = layer {
-            let _: () = msg_send![&*l, setCornerRadius: radius];
-            let _: () = msg_send![&*l, setMasksToBounds: true];
-        }
-    }
+/// A stretchable rounded-rectangle mask. Masking the frosted view this way
+/// (rather than rounding its layer) also gives the window a rounded shadow.
+fn corner_mask(radius: f64) -> Retained<NSImage> {
+    let side = radius * 2.0 + 1.0;
+    let handler = block2::RcBlock::new(move |rect: NSRect| -> objc2::runtime::Bool {
+        NSColor::blackColor().setFill();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
+        objc2::runtime::Bool::YES
+    });
+    let img = NSImage::imageWithSize_flipped_drawingHandler(NSSize::new(side, side), false, &handler);
+    img.setCapInsets(NSEdgeInsets { top: radius, left: radius, bottom: radius, right: radius });
+    img.setResizingMode(NSImageResizingMode::Stretch);
+    img
 }
 
 /// Another copy is already running: ask it to open, and say so.
@@ -270,7 +273,7 @@ pub fn run() {
         fx.setMaterial(NSVisualEffectMaterial::Popover);
         fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
         fx.setState(NSVisualEffectState::Active);
-        round_corners(&fx, app::RADIUS);
+        fx.setMaskImage(Some(&corner_mask(app::RADIUS)));
         fx.addSubview(&view);
         Retained::into_super(fx)
     };

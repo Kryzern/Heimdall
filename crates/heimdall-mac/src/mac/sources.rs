@@ -307,7 +307,7 @@ fn settings_panes(q: &str, out: &mut Vec<Item>) {
             (None, None) => continue,
         };
         let url = format!("x-apple.systempreferences:{id}");
-        let mut it = Item::new(title, "System Settings", Kind::WinSetting, sym(glyph), Action::Url(url.clone())).with_key(format!("w:{id}"));
+        let mut it = Item::new(title, "System Settings", Kind::WinSetting, sym(glyph), Action::Open(url)).with_key(format!("w:{id}"));
         it.score = score - 50;
         if let Some((_, pos)) = t {
             it.hl = ranges16(title, &pos);
