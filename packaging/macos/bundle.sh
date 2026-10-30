@@ -8,6 +8,8 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 export MACOSX_DEPLOYMENT_TARGET=11.0
 # Test builds keep line tables, so a crash in heimdall.log says where.
 export CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
+# Objective-C exceptions can only be caught if Rust frames may unwind.
+export CARGO_PROFILE_RELEASE_PANIC=unwind
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
     cargo build --release -p heimdall-mac --features objc-exceptions --target "$target"
 done

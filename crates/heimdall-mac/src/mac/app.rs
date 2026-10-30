@@ -175,6 +175,9 @@ pub struct App {
     caret_was: bool,
     dirty: bool,
     timer: Option<Retained<NSTimer>>,
+    /// Recompute the window shadow once the first frame is on screen, so it
+    /// follows the glass's rounded corners rather than the square frame.
+    shadow_pending: bool,
 
     settings_page: bool,
     recording: bool,
@@ -236,6 +239,7 @@ impl App {
             caret_was: true,
             dirty: true,
             timer: None,
+            shadow_pending: false,
             settings_page: false,
             recording: false,
             notice: None,
@@ -344,6 +348,7 @@ impl App {
         self.panel.makeKeyAndOrderFront(None);
         self.panel.makeFirstResponder(Some(&self.view));
         self.caret_at = Instant::now();
+        self.shadow_pending = true;
         self.start_timer();
     }
 
@@ -1020,6 +1025,11 @@ impl App {
         }
         if self.dirty {
             self.render();
+        }
+        if self.shadow_pending {
+            self.shadow_pending = false;
+            self.panel.displayIfNeeded();
+            self.panel.invalidateShadow();
         }
     }
 

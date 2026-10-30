@@ -218,6 +218,29 @@ fn corner_mask(radius: f64) -> Retained<NSImage> {
     img
 }
 
+/// The frosted material for macOS before 26, with `view` inside, its corners
+/// rounded by a mask image or, failing that, by its layer.
+fn frosted(mtm: MainThreadMarker, frame: NSRect, view: &NSView, masked: bool) -> Retained<NSView> {
+    let fx = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
+    fx.setMaterial(NSVisualEffectMaterial::Popover);
+    fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    fx.setState(NSVisualEffectState::Active);
+    if masked {
+        fx.setMaskImage(Some(&corner_mask(app::RADIUS)));
+    } else {
+        fx.setWantsLayer(true);
+        unsafe {
+            let layer: Option<Retained<AnyObject>> = msg_send![&*fx, layer];
+            if let Some(l) = layer {
+                let _: () = msg_send![&*l, setCornerRadius: app::RADIUS];
+                let _: () = msg_send![&*l, setMasksToBounds: true];
+            }
+        }
+    }
+    fx.addSubview(view);
+    Retained::into_super(fx)
+}
+
 /// Another copy is already running: ask it to open, and say so.
 fn already_running() -> bool {
     let others = NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(BUNDLE_ID));
@@ -282,15 +305,16 @@ pub fn run() {
         liquid = Some(glass.clone());
         Retained::into_super(glass)
     } else {
-        let fx = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
-        fx.setMaterial(NSVisualEffectMaterial::Popover);
-        fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        fx.setState(NSVisualEffectState::Active);
-        fx.setMaskImage(Some(&corner_mask(app::RADIUS)));
-        fx.addSubview(&view);
-        Retained::into_super(fx)
+        frosted(mtm, frame, &view, true)
     };
-    panel.setContentView(Some(&content));
+    // Some macOS versions throw when the window takes a masked frosted view;
+    // fall back to rounding its layer, which only costs a squarer shadow.
+    let fits = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| panel.setContentView(Some(&content)))).is_ok();
+    if !fits {
+        heimdall_common::log("the corner mask was refused; using a rounded layer instead");
+        view.removeFromSuperview();
+        panel.setContentView(Some(&frosted(mtm, frame, &view, false)));
+    }
 
     let state = App::new(mtm, panel, view, liquid, query);
     APP.with(|a| *a.borrow_mut() = Some(state));
