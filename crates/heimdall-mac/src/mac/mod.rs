@@ -214,7 +214,9 @@ fn corner_mask(radius: f64) -> Retained<NSImage> {
     #[allow(deprecated)]
     img.unlockFocus();
     img.setCapInsets(NSEdgeInsets { top: radius, left: radius, bottom: radius, right: radius });
-    img.setResizingMode(NSImageResizingMode::Stretch);
+    // objc2-app-kit 0.3 swaps Stretch and Tile on Apple Silicon (it applies
+    // the iOS values there); AppKit's own NSImageResizingModeStretch is 1.
+    img.setResizingMode(NSImageResizingMode(1));
     img
 }
 
