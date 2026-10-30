@@ -1,6 +1,22 @@
 [workspace]
 resolver = "2"
-members = ["crates/heimdall-core", "crates/heimdall-indexer", "crates/heimdall", "crates/heimdall-bench"]
+members = [
+    "crates/heimdall-core",
+    "crates/heimdall-common",
+    "crates/heimdall-indexer",
+    "crates/heimdall",
+    "crates/heimdall-bench",
+    "crates/heimdall-mac",
+]
+# The macOS front end only builds on a Mac (CI does that); leave it out of
+# plain `cargo build` on Windows.
+default-members = [
+    "crates/heimdall-core",
+    "crates/heimdall-common",
+    "crates/heimdall-indexer",
+    "crates/heimdall",
+    "crates/heimdall-bench",
+]
 
 [workspace.package]
 version = "1.0.4"
@@ -10,6 +26,7 @@ authors = ["Ethan Dsouza (Kryzern)"]
 
 [workspace.dependencies]
 heimdall-core = { path = "crates/heimdall-core" }
+heimdall-common = { path = "crates/heimdall-common" }
 memchr = "2.8"
 rayon = "1.12"
 serde = { version = "1", features = ["derive"] }

@@ -86,6 +86,7 @@ name = "heimdall"
 version = "1.0.4"
 dependencies = [
  "embed-resource",
+ "heimdall-common",
  "heimdall-core",
  "rayon",
  "serde",
@@ -104,6 +105,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "heimdall-common"
+version = "1.0.4"
+dependencies = [
+ "heimdall-core",
+ "serde",
+ "serde_json",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "heimdall-core"
 version = "1.0.4"
 dependencies = [
@@ -119,6 +130,15 @@ dependencies = [
  "embed-resource",
  "heimdall-core",
  "windows-sys",
+]
+
+[[package]]
+name = "heimdall-mac"
+version = "1.0.4"
+dependencies = [
+ "heimdall-common",
+ "heimdall-core",
+ "rayon",
 ]
 
 [[package]]

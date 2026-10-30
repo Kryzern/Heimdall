@@ -382,39 +382,14 @@ fn applets(q: &str, applets: &[Applet], out: &mut Vec<Item>) {
     }
 }
 
-/// Where `note ...` writes: the configured file, or Documents\Heimdall notes.md.
+/// Where `note ...` writes.
 pub fn notes_path(cfg: &Config) -> String {
-    if !cfg.notes.trim().is_empty() {
-        return expand_home(cfg.notes.trim());
-    }
-    let docs = std::env::var_os("USERPROFILE").map(|h| format!("{}\\Documents", h.to_string_lossy())).unwrap_or_default();
-    format!("{docs}\\Heimdall notes.md")
+    heimdall_common::notes::path(cfg).to_string_lossy().into_owned()
 }
 
 /// Append `text` to the notes file as a timestamped Markdown list item.
 pub fn save_note(cfg: &Config, text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let path = notes_path(cfg);
-    if let Some(dir) = std::path::Path::new(&path).parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
-    // Start on a fresh line if the file doesn't end with one.
-    let len = f.metadata()?.len();
-    let lead = if len > 0 && !ends_with_newline(&path) { "\n" } else { "" };
-    writeln!(f, "{lead}- {} {text}", platform::local_timestamp())
-}
-
-fn ends_with_newline(path: &str) -> bool {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut last = [0u8; 1];
-    std::fs::File::open(path)
-        .and_then(|mut f| {
-            f.seek(SeekFrom::End(-1))?;
-            f.read_exact(&mut last)
-        })
-        .map(|_| last[0] == b'\n')
-        .unwrap_or(true)
+    heimdall_common::notes::append(cfg, &platform::local_timestamp(), text)
 }
 
 /// The `?` page: what you can type.
@@ -658,21 +633,6 @@ mod tests {
         assert!(titles("wallpaper").contains(&"Background".to_string()));
         let re = titles("re");
         assert!(re.len() < 6, "{re:?}");
-    }
-
-    #[test]
-    fn notes_append_lines() {
-        let path = std::env::temp_dir().join(format!("heimdall-notes-{}.md", std::process::id()));
-        std::fs::write(&path, "# Inbox").unwrap();
-        let cfg = Config { notes: path.to_string_lossy().into_owned(), ..Config::default() };
-        save_note(&cfg, "first").unwrap();
-        save_note(&cfg, "second").unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        std::fs::remove_file(&path).ok();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 3, "{text:?}");
-        assert!(lines[1].starts_with("- 20") && lines[1].ends_with(" first"));
-        assert!(lines[2].ends_with(" second") && text.ends_with('\n'));
     }
 
     #[test]

@@ -10,7 +10,7 @@ authors.workspace = true
 memchr.workspace = true
 rayon.workspace = true
 
-[dependencies.windows-sys]
+[target.'cfg(windows)'.dependencies.windows-sys]
 workspace = true
 features = [
     "Win32_Foundation",

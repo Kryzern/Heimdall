@@ -4,11 +4,14 @@
 pub mod b64;
 pub mod calc;
 pub mod index;
+#[cfg(windows)]
 pub mod ntfs;
+#[cfg(windows)]
 pub mod proto;
 pub mod query;
 pub mod search;
 pub mod snapshot;
+#[cfg(windows)]
 pub mod walk;
 
 pub use index::Volume;

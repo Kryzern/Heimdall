@@ -5,13 +5,9 @@
 mod actions;
 mod app;
 mod apps;
-mod config;
-mod edit;
 mod files;
 mod flow;
 mod gfx;
-mod history;
-mod items;
 mod menu;
 mod platform;
 mod shell;
@@ -19,6 +15,9 @@ mod sources;
 mod winkey;
 
 use app::{App, WM_APP_SHOW};
+// Shared with the macOS front end, imported here so `crate::config` and friends resolve.
+use heimdall_common::{config, edit, history, items};
+pub use heimdall_common::log;
 use std::cell::RefCell;
 use windows::core::{w, BOOL};
 use windows::Win32::Foundation::*;
@@ -35,19 +34,6 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
-}
-
-pub fn log(msg: impl AsRef<str>) {
-    use std::io::Write;
-    let dir = config::dir();
-    std::fs::create_dir_all(&dir).ok();
-    let path = dir.join("heimdall.log");
-    if std::fs::metadata(&path).map(|m| m.len() > 512 << 10).unwrap_or(false) {
-        std::fs::remove_file(&path).ok();
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        writeln!(f, "[{}] {}", heimdall_core::query::now_unix(), msg.as_ref()).ok();
-    }
 }
 
 /// `HEIMDALL_TRACE=1` logs slow messages and frames to heimdall.log.

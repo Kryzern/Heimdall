@@ -1,0 +1,16 @@
+[package]
+name = "heimdall-mac"
+description = "Heimdall for macOS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "heimdall-mac"
+path = "src/main.rs"
+
+[dependencies]
+heimdall-core.workspace = true
+heimdall-common.workspace = true
+rayon.workspace = true
