@@ -91,6 +91,16 @@ Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 c
 
 The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu and the tray, starts it, and sets it to start with Windows.
 
+### Chocolatey
+
+Chocolatey support is awaiting initial publication. The package ID is `heimdall-launcher` because `heimdall` is already used by Heimdall Suite. After approval:
+
+```powershell
+choco install heimdall-launcher -y
+choco upgrade heimdall-launcher -y
+choco uninstall heimdall-launcher -y
+```
+
 <details>
 <summary><b>The indexer service</b></summary>
 <br>
