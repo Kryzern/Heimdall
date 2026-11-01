@@ -756,6 +756,8 @@ impl App {
         self.theme = Theme::new(platform::is_dark(&self.panel));
         if let Some(g) = &self.liquid {
             g.setStyle(if self.cfg.glass == "auto" { NSGlassEffectViewStyle::Regular } else { NSGlassEffectViewStyle::Clear });
+            // The shadow follows the glass's shape, which the style changes.
+            self.panel.invalidateShadow();
         }
     }
 

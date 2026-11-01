@@ -230,17 +230,22 @@ fn frosted(mtm: MainThreadMarker, frame: NSRect, view: &NSView, masked: bool) ->
     if masked {
         fx.setMaskImage(Some(&corner_mask(app::RADIUS)));
     } else {
-        fx.setWantsLayer(true);
-        unsafe {
-            let layer: Option<Retained<AnyObject>> = msg_send![&*fx, layer];
-            if let Some(l) = layer {
-                let _: () = msg_send![&*l, setCornerRadius: app::RADIUS];
-                let _: () = msg_send![&*l, setMasksToBounds: true];
-            }
-        }
+        round_layer(&fx);
     }
     fx.addSubview(view);
     Retained::into_super(fx)
+}
+
+/// Clip `view` to the panel's rounded corners through its layer.
+fn round_layer(view: &NSView) {
+    view.setWantsLayer(true);
+    unsafe {
+        let layer: Option<Retained<AnyObject>> = msg_send![view, layer];
+        if let Some(l) = layer {
+            let _: () = msg_send![&*l, setCornerRadius: app::RADIUS];
+            let _: () = msg_send![&*l, setMasksToBounds: true];
+        }
+    }
 }
 
 /// Another copy is already running: ask it to open, and say so.
@@ -303,6 +308,9 @@ pub fn run() {
     let content: Retained<NSView> = if AnyClass::get(c"NSGlassEffectView").is_some() {
         let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         glass.setCornerRadius(app::RADIUS);
+        // The standard style draws a little past its rounded shape; clip it,
+        // or the window takes a square outline and shadow from those corners.
+        round_layer(&glass);
         glass.setContentView(Some(&view));
         liquid = Some(glass.clone());
         Retained::into_super(glass)
