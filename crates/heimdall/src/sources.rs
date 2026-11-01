@@ -36,6 +36,8 @@ const G_TIP: char = '\u{E82F}';
 const G_FILTER: char = '\u{E71C}';
 const G_NOTE: char = '\u{E70B}';
 const G_CLEAR: char = '\u{E894}';
+const G_LIST: char = '\u{E8FD}';
+const G_UPDATE: char = '\u{E895}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -80,6 +82,8 @@ pub struct Ctx<'a> {
     pub applets: &'a [Applet],
     pub cfg: &'a Config,
     pub service: bool,
+    /// The service is an older version than this Heimdall's.
+    pub indexer_stale: bool,
 }
 
 /// Rows that can be computed instantly on the UI thread. Returns whether the
@@ -228,9 +232,13 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
         ("Heimdall: Settings", "heimdall settings preferences hotkey shortcut theme", Internal::Settings),
         ("Heimdall: Open config file", "heimdall config toml edit", Internal::EditConfig),
         ("Heimdall: Rebuild file index", "heimdall rebuild reindex index", Internal::ReloadIndex),
+        ("Heimdall: Check for updates", "heimdall update upgrade version", Internal::CheckUpdates),
         ("Heimdall: Import Flow Launcher web searches", "heimdall import flow launcher", Internal::ImportFlow),
         ("Heimdall: Quit", "heimdall quit exit close", Internal::Quit),
     ];
+    if ctx.service && ctx.indexer_stale {
+        own.insert(0, ("Heimdall: Update the file indexer", "heimdall update indexer service", Internal::InstallIndexer));
+    }
     if !ctx.service {
         own.insert(
             0,
@@ -249,6 +257,28 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
             out.push(it);
         }
     }
+}
+
+/// The row at the top of the empty view that offers a new version.
+pub fn update_item(version: &str, note: &str) -> Item {
+    let title = format!("Update Heimdall to {version}");
+    let mut it = Item::new(&title, note, Kind::Command, heimdall_icon(), Action::Heimdall(Internal::Update)).with_key("h:update");
+    it.value = "Update".into();
+    it
+}
+
+/// The row at the top of the empty view that offers to update the indexer.
+pub fn indexer_item() -> Item {
+    let mut it = Item::new(
+        "Update the file indexer",
+        "A newer one came with the last update. Windows asks for admin once",
+        Kind::Command,
+        heimdall_icon(),
+        Action::Heimdall(Internal::InstallIndexer),
+    )
+    .with_key("h:indexer");
+    it.value = "Update".into();
+    it
 }
 
 /// Heimdall's own logo, so its commands never look like Windows Settings.
@@ -452,7 +482,7 @@ fn tips() -> Vec<Item> {
 
 /// Heimdall's settings page, filtered by `q`. `recording` and `notice` describe
 /// the hotkey row while a new shortcut is being captured.
-pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, has_recent: bool) -> Vec<Item> {
+pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, has_recent: bool, update_note: &str) -> Vec<Item> {
     let on = |b: bool| if b { "On" } else { "Off" }.to_string();
     let cap = |s: &str| {
         let mut c = s.chars();
@@ -474,8 +504,11 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, ha
         ("Corners", "Round, Windows (like Windows 11) or square".into(), G_CORNERS, S::Corners, cap(&cfg.corners)),
         ("Animations", "Turn off to make everything appear instantly".into(), G_ANIM, S::Animations, on(cfg.animations)),
         ("Recent items", "Show recent files when the search box is empty".into(), G_RECENT, S::Recent, on(cfg.show_recent)),
+        ("Recent items shown", "Pinned and recent items listed before you type".into(), G_RECENT, S::RecentRows, cfg.max_recent.clamp(3, 14).to_string()),
+        ("Search results shown", "Results listed at once while searching; scroll for more".into(), G_LIST, S::SearchRows, cfg.max_results.clamp(3, 14).to_string()),
         ("Clear search on close", "Open with an empty search box every time".into(), G_CLEAR, S::ClearOnClose, on(cfg.clear_on_close)),
         ("Game mode", "Release the hotkey while a fullscreen game has focus".into(), G_GAME, S::GameMode, on(cfg.game_mode)),
+        ("Updates", update_note.into(), G_UPDATE, S::Updates, cap(&cfg.updates)),
     ];
     let mut out = Vec::new();
     for (title, sub, glyph, setting, value) in rows {
@@ -503,7 +536,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, ha
     let edit = "Open config file";
     if q.trim().is_empty() || fuzzy_words(q, &Target::new(edit)).is_some() {
         out.push(
-            Item::new(edit, "Width, result count, web searches and more", Kind::Setting, Icon::Glyph(G_EDIT), Action::Heimdall(Internal::EditConfig))
+            Item::new(edit, "Width, excluded folders, web searches and more", Kind::Setting, Icon::Glyph(G_EDIT), Action::Heimdall(Internal::EditConfig))
                 .with_key("set:config"),
         );
     }
@@ -678,7 +711,7 @@ mod tests {
     #[test]
     fn note_prefix() {
         let cfg = Config::default();
-        let ctx = Ctx { apps: &[], applets: &[], cfg: &cfg, service: false };
+        let ctx = Ctx { apps: &[], applets: &[], cfg: &cfg, service: false, indexer_stale: false };
         let (rows, files) = instant("note call the dentist", &ctx, HWND::default());
         assert!(!files);
         assert!(matches!(&rows[0].action, Action::Note(t) if t == "call the dentist"));

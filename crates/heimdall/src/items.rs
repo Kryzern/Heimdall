@@ -71,6 +71,9 @@ pub enum Internal {
     ImportFlow,
     /// Forget usage history and hide older Windows recent files.
     ClearRecent,
+    /// Install a downloaded update, or download and then install it.
+    Update,
+    CheckUpdates,
     Set(Setting),
 }
 
@@ -88,6 +91,9 @@ pub enum Setting {
     Recent,
     ClearOnClose,
     GameMode,
+    SearchRows,
+    RecentRows,
+    Updates,
 }
 
 #[derive(Clone, Debug)]
