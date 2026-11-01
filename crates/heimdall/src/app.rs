@@ -12,6 +12,7 @@ use crate::menu::{self, Menu, Tray};
 use crate::platform;
 use crate::shell::{Done, Job, Preview, Worker};
 use crate::sources::{self, Ctx, Mode};
+use crate::update::{self, Install, State as UpdateState, Updater};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Receiver};
@@ -212,6 +213,19 @@ pub struct App {
     items: Vec<Item>,
     sel: usize,
     scroll: usize,
+    /// Rows the window was sized for when it opened.
+    rows_cap: usize,
+    /// Dragging the scrollbar thumb: where in the thumb it was grabbed, in DIPs.
+    thumb_grab: Option<f32>,
+    /// A pinned row being dragged into a new place, by its index.
+    moving_pin: Option<usize>,
+
+    updater: Updater,
+    /// When updates were last looked for.
+    update_at: Option<Instant>,
+    /// The update row was picked: install as soon as the download is done.
+    install_asked: bool,
+    indexer_stale: bool,
     user_moved: bool,
     confirm_key: Option<String>,
     qid: u64,
@@ -304,6 +318,13 @@ impl App {
             items: Vec::new(),
             sel: 0,
             scroll: 0,
+            rows_cap: 14,
+            thumb_grab: None,
+            moving_pin: None,
+            updater: Updater::new(hwnd),
+            update_at: None,
+            install_asked: false,
+            indexer_stale: false,
             user_moved: false,
             confirm_key: None,
             qid: 0,
@@ -345,6 +366,7 @@ impl App {
         };
         app.set_hotkey(true);
         app.sync_tray();
+        app.check_updates(false);
         app
     }
 
@@ -398,7 +420,15 @@ impl App {
 
     /// Foreground window changed: release the hotkey in games and passthrough apps.
     pub fn on_foreground(&mut self, fg: HWND) {
-        if fg == self.hwnd || self.visible {
+        if fg == self.hwnd {
+            return;
+        }
+        if self.visible {
+            // Another window came forward without us ever being active (Windows
+            // refused us the focus): close as if we had lost it.
+            if !self.dragging {
+                self.hide();
+            }
             return;
         }
         let exe = platform::process_path(fg)
@@ -440,7 +470,8 @@ impl App {
         self.scale = mon.dpi as f32 / 96.0;
         let s = self.scale;
         let w = self.cfg.width.clamp(480.0, 1200.0);
-        let rows = self.cfg.max_results.clamp(3, 14) as f32;
+        self.rows_cap = self.cfg.max_results.max(self.cfg.max_recent).clamp(3, 14);
+        let rows = self.rows_cap as f32;
         let ww = ((w + PREVIEW + 2.0 * M) * s).ceil() as i32;
         let wh = ((BAR + 2.0 * PAD + HEADER + ROW * rows + 2.0 * M) * s).ceil() as i32;
         let work = mon.work;
@@ -499,6 +530,11 @@ impl App {
             self.slow.send(Job::Apps);
         }
         self.slow.send(Job::Recent { after: self.history.cleared });
+        self.indexer_stale = self.files.status.service.load(Ordering::Relaxed) && update::indexer_stale();
+        // Heimdall runs for weeks at a time; look again a few times a day.
+        if self.update_at.is_none_or(|t| t.elapsed().as_secs() > 6 * 3600) {
+            self.check_updates(false);
+        }
         self.kick();
     }
 
@@ -518,18 +554,128 @@ impl App {
         self.preview_req = None;
         self.history.save();
         self.settings_page = false;
+        self.thumb_grab = None;
+        self.moving_pin = None;
         self.recording = false;
         self.notice = None;
         self.menu = None;
         if !self.hotkey_wanted {
             self.set_hotkey(true);
         }
+        self.install_if_idle();
+    }
+
+    // ---- updates -----------------------------------------------------------
+
+    fn check_updates(&mut self, by_hand: bool) {
+        if self.cfg.updates == "off" && !by_hand {
+            return;
+        }
+        self.update_at = Some(Instant::now());
+        self.updater.check();
+    }
+
+    /// Can this copy install an update itself?
+    fn self_updates(&self) -> bool {
+        update::install_kind() == Install::Setup
+    }
+
+    /// A check or download finished.
+    fn on_update(&mut self) {
+        match self.updater.state() {
+            UpdateState::Available(r) => {
+                crate::log(format!("update: {} is available", r.version));
+                if self.self_updates() && r.setup.is_some() && (self.quiet_update(&r.version) || self.install_asked) {
+                    self.updater.download();
+                }
+            }
+            UpdateState::Ready(..) if self.install_asked => {
+                self.hide();
+                self.install_now();
+            }
+            UpdateState::Failed if self.install_asked => {
+                self.install_asked = false;
+                crate::log("update: couldn't download it");
+            }
+            UpdateState::Ready(..) => self.install_if_idle(),
+            _ => {}
+        }
+        if self.visible && matches!(self.mode, Mode::Recent | Mode::Settings) {
+            let key = self.items.get(self.sel).map(|i| i.key.clone());
+            self.refresh();
+            self.select_key(key);
+        }
+    }
+
+    /// Automatic updates install while Heimdall is closed, never mid-search.
+    fn install_if_idle(&mut self) {
+        if let UpdateState::Ready(r, _) = self.updater.state() {
+            if !self.visible && self.quiet_update(&r.version) {
+                self.install_now();
+            }
+        }
+    }
+
+    /// Install `version` without asking? Not if an earlier try didn't take.
+    fn quiet_update(&self, version: &str) -> bool {
+        self.cfg.updates == "auto" && self.self_updates() && !update::tried(version)
+    }
+
+    fn install_now(&mut self) {
+        let UpdateState::Ready(r, setup) = self.updater.state() else { return };
+        self.history.save();
+        if update::install(&setup, &r.version) {
+            crate::log(format!("update: installing {}", r.version));
+            self.updater.clear();
+        } else {
+            crate::log("update: the setup didn't start");
+        }
+    }
+
+    /// The Updates setting's subtitle: what the last check found.
+    fn update_note(&self) -> String {
+        let cur = env!("CARGO_PKG_VERSION");
+        match self.updater.state() {
+            UpdateState::Checking => "Checking for a new version\u{2026}".into(),
+            UpdateState::Latest => format!("Heimdall {cur} is the latest version"),
+            UpdateState::Failed => "Couldn't reach GitHub to check for updates".into(),
+            UpdateState::Idle => "Install new versions automatically, only offer them, or don't check".into(),
+            UpdateState::Available(r) | UpdateState::Downloading(r) | UpdateState::Ready(r, _) => self.update_offer(&r.version),
+        }
+    }
+
+    /// What picking the update row will do.
+    fn update_offer(&self, version: &str) -> String {
+        match (update::install_kind(), self.updater.state()) {
+            (Install::Scoop, _) => format!("{version} is out: run scoop update heimdall"),
+            (Install::Portable, _) => format!("{version} is out: Enter opens its download page"),
+            (_, UpdateState::Downloading(_)) => format!("Downloading {version}\u{2026}"),
+            (_, UpdateState::Ready(..)) => "Downloaded: Enter installs it and restarts Heimdall".into(),
+            _ => "Enter downloads and installs it".into(),
+        }
+    }
+
+    /// The row offering a new version above pins and recent items. Automatic
+    /// updates install quietly instead, unless this copy can't do that.
+    fn update_row(&self) -> Option<Item> {
+        if self.cfg.updates == "off" {
+            return None;
+        }
+        let r = match self.updater.state() {
+            UpdateState::Available(r) | UpdateState::Downloading(r) | UpdateState::Ready(r, _) => r,
+            _ => return None,
+        };
+        let quiet = self.quiet_update(&r.version) && r.setup.is_some() && !self.install_asked;
+        (!quiet).then(|| sources::update_item(&r.version, &self.update_offer(&r.version)))
     }
 
     // ---- results -----------------------------------------------------------
 
+    /// Rows shown at once: the recent view and search each have their own limit.
     fn max_rows(&self) -> usize {
-        self.cfg.max_results.clamp(3, 14)
+        let n = if self.mode == Mode::Recent { self.cfg.max_recent } else { self.cfg.max_results };
+        // A limit raised while open applies from the next open, when the window is resized.
+        n.clamp(3, 14).min(self.rows_cap)
     }
 
     fn refresh(&mut self) {
@@ -541,7 +687,8 @@ impl App {
         if self.settings_page {
             self.mode = Mode::Settings;
             let has_recent = self.history.len() > 0 || !self.recent.is_empty();
-            self.instant_rows = sources::settings(&q, &self.cfg, self.recording, self.notice.as_deref(), has_recent);
+            let note = self.update_note();
+            self.instant_rows = sources::settings(&q, &self.cfg, self.recording, self.notice.as_deref(), has_recent, &note);
             self.file_rows.clear();
             self.files_pending = false;
             self.merge(true);
@@ -553,12 +700,19 @@ impl App {
             applets: &self.applets,
             cfg: &self.cfg,
             service: self.files.status.service.load(Ordering::Relaxed),
+            indexer_stale: self.indexer_stale,
         };
         let (items, want_files) = sources::instant(&q, &ctx, self.hwnd);
         self.instant_rows = items;
         if self.mode == Mode::Recent {
             // Pins first, then (if they're on) the most used and recent files.
             let mut rows = self.history.pins();
+            if let Some(u) = self.update_row() {
+                rows.insert(0, u);
+            }
+            if self.indexer_stale {
+                rows.insert(0, sources::indexer_item());
+            }
             if self.cfg.show_recent {
                 for r in self.history.top(5).into_iter().chain(sources::recent_items(&self.recent)) {
                     if !rows.iter().any(|x| x.key == r.key) {
@@ -671,6 +825,7 @@ impl App {
                             applets: &self.applets,
                             cfg: &self.cfg,
                             service: self.files.status.service.load(Ordering::Relaxed),
+                            indexer_stale: self.indexer_stale,
                         };
                         self.instant_rows = sources::instant(&q, &ctx, self.hwnd).0;
                         self.merge(false);
@@ -762,6 +917,46 @@ impl App {
         }
         let r = ((y - top) / ROW) as usize;
         (r < self.visible_rows()).then_some(self.scroll + r)
+    }
+
+    /// The row under height `y`, ignoring where the pointer is across.
+    fn row_at_y(&self, y: f32) -> usize {
+        let r = ((y - self.list_top()).max(0.0) / ROW) as usize;
+        self.scroll + r.min(self.visible_rows().saturating_sub(1))
+    }
+
+    /// The scrollbar's track and thumb, when there are more results than rows.
+    fn scrollbar(&self) -> Option<(Rect, Rect)> {
+        let n = self.visible_rows();
+        let len = self.items.len();
+        if n == 0 || len <= n {
+            return None;
+        }
+        let track = Rect::new(M + self.panel_w() - 9.0, self.list_top() + 4.0, 4.0, n as f32 * ROW - 8.0);
+        let thumb_h = (track.h * n as f32 / len as f32).max(24.0);
+        let ty = track.y + (track.h - thumb_h) * self.scroll as f32 / (len - n) as f32;
+        Some((track, Rect::new(track.x, ty, track.w, thumb_h)))
+    }
+
+    /// Scroll so the thumb's top sits at `y`, keeping the selection in view.
+    fn drag_thumb(&mut self, y: f32) {
+        let Some((track, thumb)) = self.scrollbar() else { return };
+        let n = self.visible_rows();
+        let max = self.items.len() - n;
+        let k = ((y - track.y) / (track.h - thumb.h).max(1.0)).clamp(0.0, 1.0);
+        let scroll = (k * max as f32).round() as usize;
+        if scroll == self.scroll {
+            return;
+        }
+        self.scroll = scroll;
+        let sel = self.sel.clamp(scroll, scroll + n - 1);
+        if sel != self.sel {
+            self.sel = sel;
+            self.user_moved = true;
+            self.load_preview();
+        }
+        self.sel_y.snap(self.sel_target());
+        self.kick();
     }
 
     fn shape_rect(&self) -> Rect {
@@ -914,6 +1109,24 @@ impl App {
                 self.select_key(key);
                 return false;
             }
+            Internal::Update => {
+                let (UpdateState::Available(r) | UpdateState::Downloading(r) | UpdateState::Ready(r, _)) = self.updater.state() else {
+                    return false;
+                };
+                if !self.self_updates() || r.setup.is_none() {
+                    actions::open(&r.page, false);
+                    return true;
+                }
+                self.install_asked = true;
+                self.on_update();
+                return false;
+            }
+            Internal::CheckUpdates => {
+                self.check_updates(true);
+                self.open_settings();
+                self.select_key(Some("set:Updates".into()));
+                return false;
+            }
             Internal::ImportFlow => {
                 let added = crate::flow::import(&mut self.cfg);
                 config::save(&self.cfg);
@@ -983,6 +1196,12 @@ impl App {
             Setting::Recent => c.show_recent = !c.show_recent,
             Setting::ClearOnClose => c.clear_on_close = !c.clear_on_close,
             Setting::GameMode => c.game_mode = !c.game_mode,
+            Setting::SearchRows => c.max_results = next_count(c.max_results),
+            Setting::RecentRows => c.max_recent = next_count(c.max_recent),
+            Setting::Updates => cycle(&mut c.updates, &["auto", "notify", "off"]),
+        }
+        if s == Setting::Updates && self.cfg.updates != "off" {
+            self.check_updates(false);
         }
         if s != Setting::Hotkey {
             self.save_config();
@@ -1432,9 +1651,24 @@ impl App {
             }
             return;
         }
+        if let Some(grab) = self.thumb_grab {
+            self.drag_thumb(y - grab);
+            return;
+        }
+        if let Some(from) = self.moving_pin {
+            self.move_pin(from, self.row_at_y(y));
+            return;
+        }
         if let Some((sx, sy, row)) = self.press {
             if buttons & 1 != 0 && ((px - sx).abs() > 6 || (py - sy).abs() > 6) {
                 self.press = None;
+                // Pins drag up and down into a new order; anything else
+                // (or a pin dragged sideways) drags out to other apps.
+                let pin = self.mode == Mode::Recent && self.items.get(row).is_some_and(|i| self.history.pinned(&i.key));
+                if pin && (py - sy).abs() > (px - sx).abs() {
+                    self.moving_pin = Some(row);
+                    return;
+                }
                 if let Some(path) = self.items.get(row).and_then(|i| i.path.clone()) {
                     self.dragging = true;
                     actions::drag(self.hwnd, &path);
@@ -1462,6 +1696,16 @@ impl App {
             self.hide();
             return;
         }
+        if let Some((track, thumb)) = self.scrollbar() {
+            // A wider target than the bar itself.
+            if x >= track.x - 6.0 && y >= track.y && y <= track.y + track.h {
+                let grab = if y >= thumb.y && y <= thumb.y + thumb.h { y - thumb.y } else { thumb.h / 2.0 };
+                self.thumb_grab = Some(grab);
+                self.drag_thumb(y - grab);
+                unsafe { SetCapture(self.hwnd) };
+                return;
+            }
+        }
         if let Some(r) = self.row_at(x, y) {
             self.set_sel(r);
             self.press = Some((px, py, r));
@@ -1469,8 +1713,31 @@ impl App {
         }
     }
 
+    /// Drag the pin at row `from` onto row `to`, if that's a pin too.
+    fn move_pin(&mut self, from: usize, to: usize) {
+        if from == to {
+            return;
+        }
+        let (Some(a), Some(b)) = (self.items.get(from), self.items.get(to)) else { return };
+        if !self.history.pinned(&b.key) {
+            return;
+        }
+        let (a, b) = (a.key.clone(), b.key.clone());
+        self.history.move_pin(&a, &b);
+        let it = self.items.remove(from);
+        self.items.insert(to, it);
+        self.moving_pin = Some(to);
+        self.sel = to;
+        self.sel_y.target = self.sel_target();
+        self.kick();
+    }
+
     fn mouse_up(&mut self, lp: LPARAM) {
         unsafe { ReleaseCapture().ok() };
+        if self.thumb_grab.take().is_some() || self.moving_pin.take().is_some() {
+            self.kick();
+            return;
+        }
         let (x, y, _, _) = self.dip(lp);
         if self.menu.is_some() {
             if let Some(i) = self.menu_row_at(x, y) {
@@ -1669,6 +1936,10 @@ impl App {
                 let Some(it) = self.items.get(i) else { break };
                 self.draw_row(g, it, i == self.sel, top + vi as f32 * ROW, w, missing);
             }
+            if let Some((_, thumb)) = self.scrollbar() {
+                let c = if self.thumb_grab.is_some() { th.sub } else { th.faint };
+                g.fill_round(thumb, 2.0, c);
+            }
         }
 
         if self.pw.x > 1.0 {
@@ -1841,6 +2112,7 @@ impl App {
             }
             m if m == crate::files::WM_FILES_DONE => self.on_files(),
             m if m == crate::shell::WM_SHELL_DONE => self.on_shell(),
+            update::WM_UPDATE => self.on_update(),
             WM_KEYDOWN => {
                 if !self.key_down(wp.0 as u16) {
                     return None;
@@ -1876,6 +2148,12 @@ impl App {
         }
         Some(LRESULT(0))
     }
+}
+
+/// The next of the row counts offered in settings, wrapping around.
+fn next_count(n: usize) -> usize {
+    const COUNTS: [usize; 5] = [5, 8, 10, 12, 14];
+    COUNTS.iter().copied().find(|&c| c > n).unwrap_or(COUNTS[0])
 }
 
 fn human_size(b: u64) -> String {

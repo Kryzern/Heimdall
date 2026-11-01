@@ -48,9 +48,29 @@ Name: "{userprograms}\Heimdall"; Filename: "{app}\heimdall.exe"
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Heimdall"; ValueData: """{app}\heimdall.exe"" --background"; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\heimdall.exe"; Description: "Start Heimdall (press Alt+Space to open it)"; Flags: nowait postinstall
+Filename: "{app}\heimdall.exe"; Parameters: "{code:StartParams}"; Description: "Start Heimdall (press Alt+Space to open it)"; Flags: nowait postinstall
 
 [Code]
+// Heimdall passes /UPDATE when it installs a new version of itself.
+function IsUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/UPDATE') = 0 then
+      Result := True;
+end;
+
+// After an update Heimdall comes back in the background, as it was.
+function StartParams(Param: String): String;
+begin
+  if IsUpdate then
+    Result := '--background'
+  else
+    Result := '';
+end;
+
 procedure StopHeimdall;
 var
   Code: Integer;
@@ -77,7 +97,9 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
 begin
-  if CurStep = ssPostInstall then
+  // An update leaves an installed service alone rather than surprise the
+  // user with an admin prompt; Heimdall offers to update it instead.
+  if (CurStep = ssPostInstall) and not (IsUpdate and IndexerInstalled) then
   begin
     WizardForm.StatusLabel.Caption := 'Installing the file indexer service...';
     ShellExec('runas', ExpandConstant('{app}\heimdall-indexer.exe'), 'install', '', SW_HIDE, ewWaitUntilTerminated, Code);

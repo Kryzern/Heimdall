@@ -32,7 +32,10 @@ pub struct Config {
     pub exclude: Vec<String>,
     /// Width of the search panel in DIPs.
     pub width: f32,
+    /// Results shown at once while searching; more scroll into view.
     pub max_results: usize,
+    /// Pinned and recent items shown when the search box is empty.
+    pub max_recent: usize,
     /// Show recent items when the search box is empty.
     pub show_recent: bool,
     /// Start with an empty search box instead of the last search.
@@ -41,6 +44,8 @@ pub struct Config {
     /// Documents\Heimdall notes.md.
     pub notes: String,
     pub start_with_windows: bool,
+    /// "auto" (download and install new versions), "notify" (offer them) or "off".
+    pub updates: String,
     /// Show an icon in the notification area.
     pub tray: bool,
     pub web: Vec<WebSearch>,
@@ -70,10 +75,12 @@ impl Default for Config {
             exclude: Vec::new(),
             width: 680.0,
             max_results: 8,
+            max_recent: 8,
             show_recent: true,
             clear_on_close: false,
             notes: String::new(),
             start_with_windows: true,
+            updates: "auto".into(),
             tray: true,
             web: vec![
                 web("g", "Google", "https://www.google.com/search?q={q}"),
@@ -99,8 +106,11 @@ const HEADER: &str = "\
 # shadow       \"normal\" | \"soft\" | \"off\"
 # corners      \"round\" | \"windows\" (like Windows 11) | \"square\"
 # animations   false makes everything appear instantly
+# max_results  results shown at once while searching (3 to 14)
+# max_recent   pinned and recent items shown when the search box is empty (3 to 14)
 # exclude      left out of file search: drives, folders or folder names anywhere,
 #              e.g. ['D:', 'C:\\Windows', 'node_modules'] (single quotes keep the \\ as is)
+# updates      \"auto\" (install new versions while Heimdall is closed) | \"notify\" | \"off\"
 # tray         show an icon in the notification area
 # clear_on_close  open with an empty search box instead of the last search
 # notes        Markdown file that `note ...` appends to, e.g. 'D:\\Vault\\Inbox.md'

@@ -226,7 +226,18 @@ impl History {
         self.dirty = true;
     }
 
-    /// Pinned results, in the order they were pinned.
+    /// Move the pin `key` to where the pin `to` is now.
+    pub fn move_pin(&mut self, key: &str, to: &str) {
+        let from = self.pins.iter().position(|p| p.key == key);
+        let to = self.pins.iter().position(|p| p.key == to);
+        if let (Some(from), Some(to)) = (from, to) {
+            let p = self.pins.remove(from);
+            self.pins.insert(to, p);
+            self.dirty = true;
+        }
+    }
+
+    /// Pinned results, in the order they were pinned or dragged into.
     pub fn pins(&self) -> Vec<Item> {
         self.pins
             .iter()

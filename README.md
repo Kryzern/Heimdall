@@ -167,11 +167,11 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Delete</kbd> | Forget the selected item from history |
 | <kbd>Esc</kbd> | Close preview, then clear, then hide |
 
-You can also drag any file result straight into another app.
+You can also drag any file result straight into another app, and drag pinned items up or down to reorder them.
 
 ## Settings
 
-Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Press <kbd>Win</kbd> on its own there to open Heimdall instead of the Start menu, Win shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> keep working. Theme, glass, shadow, corners, animations, the tray icon, starting with Windows and clearing the search on close all change with one Enter each. **Clear recent items** is there too, pinned items stay.
+Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Press <kbd>Win</kbd> on its own there to open Heimdall instead of the Start menu, Win shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> keep working. Theme, glass, shadow, corners, animations, the tray icon, starting with Windows, clearing the search on close, how many recent items and search results are shown, and updates all change with one Enter each. **Clear recent items** is there too, pinned items stay.
 
 Everything else lives in `%APPDATA%\Heimdall\config.toml`, which gets created the first time Heimdall runs. Changes there apply the next time Heimdall opens.
 
@@ -187,11 +187,13 @@ corners = "round"             # "windows" for Windows 11's smaller corners, or "
 animations = true             # false makes everything appear instantly
 exclude = ['D:', 'C:\Windows', 'node_modules']  # left out of file search
 width = 680.0
-max_results = 8
+max_results = 8               # results shown at once while searching, scroll for more
+max_recent = 8                # pinned and recent items shown before you type
 show_recent = true
 clear_on_close = false        # open with an empty search box
 notes = 'D:\Vault\Inbox.md'   # where `note ...` goes, Documents\Heimdall notes.md by default
 start_with_windows = true
+updates = "auto"              # install new versions while Heimdall is closed, "notify" or "off"
 tray = true                   # icon in the notification area
 
 [[web]]
@@ -272,7 +274,7 @@ Issues and pull requests are always welcome, I'm happy to take a look at anythin
 
 ## Privacy
 
-Nothing leaves your machine. There's no telemetry and no update check, and Heimdall makes no network requests apart from the web searches you open yourself. Usage history is a local JSON file. Like Everything, the indexer service sees filenames across the whole drive, so any local user can search names (not contents).
+Nothing about you leaves your machine. There's no telemetry. The only request Heimdall makes by itself is asking GitHub for the latest release a few times a day, which `updates = "off"` turns off. Everything else online is the web searches you open yourself. Usage history is a local JSON file. Like Everything, the indexer service sees filenames across the whole drive, so any local user can search names (not contents).
 
 ## License
 

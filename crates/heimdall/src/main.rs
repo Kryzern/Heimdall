@@ -16,6 +16,7 @@ mod menu;
 mod platform;
 mod shell;
 mod sources;
+mod update;
 mod winkey;
 
 use app::{App, WM_APP_SHOW};
@@ -91,8 +92,13 @@ fn main() {
     unsafe {
         let _mutex = CreateMutexW(None, true, w!("Local\\Heimdall.Launcher"));
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            // Already running: ask that instance to open instead.
+            // Already running: ask that instance to open instead. Windows only
+            // lets it take the keyboard if we hand over our right to do so
+            // (we got it from being launched, e.g. from the taskbar).
             if let Ok(h) = FindWindowW(w!("HeimdallWindow"), None) {
+                let mut pid = 0;
+                GetWindowThreadProcessId(h, Some(&mut pid));
+                AllowSetForegroundWindow(pid).ok();
                 PostMessageW(Some(h), WM_APP_SHOW, WPARAM(0), LPARAM(0)).ok();
             }
             return;
