@@ -8,12 +8,17 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::core::w;
+use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 pub const WM_FILES_DONE: u32 = 0x8000 + 21;
 const REBUILD_EVERY: Duration = Duration::from_secs(30 * 60);
+/// How long to wait for an installed service that isn't listening yet.
+const SERVICE_GRACE: Duration = Duration::from_secs(120);
+const SERVICE_POLL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct Status {
@@ -130,6 +135,21 @@ fn start_local(lc: Arc<Local>, st: Arc<Status>) {
     std::thread::Builder::new()
         .name("local-index".into())
         .spawn(move || {
+            // At sign-in Heimdall can start before the indexer service is
+            // listening. Building a second index here would cost hundreds of
+            // MB, so wait for the service when it is installed.
+            if service_installed() {
+                let t0 = Instant::now();
+                while t0.elapsed() < SERVICE_GRACE {
+                    if Client::connect().is_ok() {
+                        st.service.store(true, Ordering::Relaxed);
+                        lc.started.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+                crate::log("indexer service is installed but not answering, using a local index");
+            }
             // A recent snapshot is good enough to serve; skip the first walk.
             let mut fresh = std::fs::metadata(snapshot_path())
                 .and_then(|m| m.modified())
@@ -147,13 +167,18 @@ fn start_local(lc: Arc<Local>, st: Arc<Status>) {
                 if !std::mem::take(&mut fresh) {
                     build_all(&lc, &st);
                 }
-                std::thread::sleep(REBUILD_EVERY);
-                if Client::connect().is_ok() {
-                    // The service took over; give the memory back.
-                    st.service.store(true, Ordering::Relaxed);
-                    lc.vols.write().unwrap().clear();
-                    lc.started.store(false, Ordering::Relaxed);
-                    return;
+                // Look for the service often, so a local index never sits in
+                // memory long after the service has taken over.
+                let t0 = Instant::now();
+                while t0.elapsed() < REBUILD_EVERY {
+                    std::thread::sleep(SERVICE_POLL);
+                    if Client::connect().is_ok() {
+                        st.service.store(true, Ordering::Relaxed);
+                        *lc.vols.write().unwrap() = Vec::new();
+                        lc.started.store(false, Ordering::Relaxed);
+                        crate::log("indexer service is back, dropped the local index");
+                        return;
+                    }
                 }
             }
         })
@@ -182,4 +207,17 @@ fn build_all(lc: &Local, st: &Status) {
         snapshot::save(&snapshot_path(), &mut g).ok();
     }
     st.building.store(false, Ordering::Relaxed);
+}
+
+/// Is the indexer service registered on this PC?
+fn service_installed() -> bool {
+    let mut key = HKEY::default();
+    let path = w!(r"SYSTEM\CurrentControlSet\Services\HeimdallIndexer");
+    unsafe {
+        let ok = RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, None, KEY_QUERY_VALUE, &mut key).is_ok();
+        if ok {
+            RegCloseKey(key).ok().ok();
+        }
+        ok
+    }
 }

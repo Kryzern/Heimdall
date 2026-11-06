@@ -1511,6 +1511,8 @@ impl App {
             match VIRTUAL_KEY(vk) {
                 VK_UP => self.menu_move(false),
                 VK_DOWN | VK_TAB => self.menu_move(true),
+                VIRTUAL_KEY(0x4B) if ctrl => self.menu_move(false),
+                VIRTUAL_KEY(0x4A) if ctrl => self.menu_move(true),
                 VK_RETURN => {
                     self.eat_char = true;
                     self.menu_run(sel);
@@ -1597,6 +1599,9 @@ impl App {
                     return true;
                 }
                 b'P' => self.toggle_preview(),
+                // Vim-style: Ctrl+J down, Ctrl+K up.
+                b'J' => self.set_sel(self.sel + 1),
+                b'K' => self.set_sel(self.sel.saturating_sub(1)),
                 _ => return false,
             },
             _ => return false,

@@ -110,9 +110,18 @@ impl Drop for Client {
 impl Client {
     pub fn connect() -> io::Result<Client> {
         let name = crate::ntfs::wide(PIPE_NAME);
-        let h = unsafe {
-            CreateFileW(name.as_ptr(), GENERIC_READ | GENERIC_WRITE, 0, null(), OPEN_EXISTING, 0, null_mut())
-        };
+        let mut h = INVALID_HANDLE_VALUE;
+        // Between two clients the server can be out of free instances for a
+        // moment. That is "busy", not "gone": wait for the next one.
+        for _ in 0..4 {
+            h = unsafe {
+                CreateFileW(name.as_ptr(), GENERIC_READ | GENERIC_WRITE, 0, null(), OPEN_EXISTING, 0, null_mut())
+            };
+            if h != INVALID_HANDLE_VALUE || unsafe { GetLastError() } != ERROR_PIPE_BUSY {
+                break;
+            }
+            unsafe { WaitNamedPipeW(name.as_ptr(), 250) };
+        }
         if h == INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
