@@ -51,6 +51,12 @@ Heimdall sits somewhere in between. It's two native executables, under 2 MB toge
 
 Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 came straight from your comments and issues.
 
+## What's new in 1.0.6
+
+- **Fixed:** with the Windows key as the hotkey, a tap sometimes opened the Start menu instead, usually right after a shortcut like <kbd>Win</kbd> + <kbd>L</kbd>. The key is also watched on its own thread now, so a busy moment can't make Windows skip it.
+- **Fixed:** if Heimdall started before the indexer service at sign-in, it built its own copy of the file index and kept it in memory for up to half an hour, a few hundred MB. It now waits for the service, and lets go of any local index within 30 seconds of the service coming back.
+- <kbd>Ctrl</kbd> + <kbd>J</kbd> and <kbd>Ctrl</kbd> + <kbd>K</kbd> move down and up the results.
+
 ## What's new in 1.0.5
 
 - **Updates itself.** New versions download in the background and install while Heimdall is closed. Set `updates = "notify"` to be asked first, or `"off"`. Scoop keeps handling updates for Scoop installs.
@@ -93,7 +99,7 @@ Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 c
 
 ## Install
 
-1. Download `Heimdall-1.0.5-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
+1. Download `Heimdall-1.0.6-x64-setup.exe` from the [latest release](https://github.com/Kryzern/Heimdall/releases/latest) and run it. Windows will ask for admin once, which is for the file indexer service.
 2. Press <kbd>Alt</kbd> + <kbd>Space</kbd>.
 
 The installer puts Heimdall in `%LOCALAPPDATA%\Programs\Heimdall`, adds it to the Start menu and the tray, starts it, and sets it to start with Windows.
@@ -112,7 +118,7 @@ If you say no to the admin prompt, that's completely fine, Heimdall still works 
 <summary><b>Without the installer</b></summary>
 <br>
 
-The release also has `Heimdall-1.0.5-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
+The release also has `Heimdall-1.0.6-x64.zip`. Unzip it, right-click `install.ps1` and choose **Run with PowerShell**. It installs the indexer service too, but you can run it from a terminal with `-NoIndexer` to skip that. `uninstall.ps1` removes everything again.
 
 </details>
 
@@ -164,6 +170,7 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 |---|---|
 | <kbd>Alt</kbd> + <kbd>Space</kbd> | Show or hide |
 | <kbd>Enter</kbd> | Open |
+| <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Ctrl</kbd> + <kbd>K</kbd> / <kbd>J</kbd> | Move up or down the results |
 | <kbd>Ctrl</kbd> + <kbd>Enter</kbd> | Show in Explorer |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Enter</kbd> | Run as administrator |
 | <kbd>Alt</kbd> + <kbd>Enter</kbd> | Properties |
