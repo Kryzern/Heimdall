@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>heimdall-launcher</id>
+    <version>__PACKAGE_VERSION__</version>
+    <title>Heimdall Windows Launcher</title>
+    <authors>Ethan Dsouza (Kryzern)</authors>
+    <owners>Kryzern</owners>
+    <summary>A lightweight Windows application launcher and file searcher.</summary>
+    <description>Heimdall is a lightweight application launcher and file searcher for Windows 10 and 11 x64. Its official per-user Inno Setup installer also installs the HeimdallIndexer Windows service when elevated. Chocolatey must run in an elevated session for the intended interactive user. The package downloads the official GitHub release installer and does not bundle application binaries.</description>
+    <projectUrl>https://github.com/Kryzern/Heimdall</projectUrl>
+    <packageSourceUrl>https://github.com/Kryzern/Heimdall/tree/main/packaging/chocolatey</packageSourceUrl>
+    <licenseUrl>https://github.com/Kryzern/Heimdall/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <releaseNotes>https://github.com/Kryzern/Heimdall/releases/tag/v__PACKAGE_VERSION__</releaseNotes>
+    <tags>windows x64 admin launcher search file-search</tags>
+  </metadata>
+</package>
