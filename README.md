@@ -51,6 +51,13 @@ Heimdall sits somewhere in between. It's two native executables, under 2 MB toge
 
 Thank you all for the lovely feedback, it genuinely made my day. Most of 1.0.1 came straight from your comments and issues.
 
+## What's new in 1.0.7
+
+- **Press <kbd>Ctrl</kbd> twice** to open Heimdall. Type `settings`, select Hotkey, press Enter and then tap <kbd>Ctrl</kbd> twice, or set `hotkey = "Double Ctrl"`.
+- **Update notifications.** You get a notification when a new version is out and it can't install itself (Scoop, the zip, or `updates = "notify"`), when a download or install fails, and after an update has installed. Clicking it opens the release notes.
+- **Hibernate** next to sleep, on PCs where hibernation is turned on (`powercfg /h on`).
+- **Close after copying a path**, a new setting: <kbd>Ctrl</kbd> + <kbd>C</kbd> or Copy path closes Heimdall so you can paste straight away.
+
 ## What's new in 1.0.6
 
 - **Fixed:** with the Windows key as the hotkey, a tap sometimes opened the Start menu instead, usually right after a shortcut like <kbd>Win</kbd> + <kbd>L</kbd>. The key is also watched on its own thread now, so a busy moment can't make Windows skip it.
@@ -162,7 +169,7 @@ Type and press Enter. Apps, files, folders and everything below come back in one
 | `>` | Open windows, pick one to switch to it |
 | `C:\Us` or `~\Doc` | Browse folders, Tab completes |
 | `g rust lifetimes` | Web search with a prefix (`g`, `ddg`, `yt`, `gh`, `wiki`, or your own) |
-| `lock`, `sleep`, `restart` | System actions, anything destructive asks for a second Enter |
+| `lock`, `sleep`, `hibernate`, `restart` | System actions, anything destructive asks for a second Enter |
 | `settings` | Heimdall's own settings |
 | `?` | Tips, with every filter and prefix one Enter away |
 
@@ -185,12 +192,12 @@ You can also drag any file result straight into another app, and drag pinned ite
 
 ## Settings
 
-Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Press <kbd>Win</kbd> on its own there to open Heimdall instead of the Start menu, Win shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> keep working. Theme, glass, shadow, corners, animations, the tray icon, starting with Windows, clearing the search on close, how many recent items and search results are shown, and updates all change with one Enter each. **Clear recent items** is there too, pinned items stay.
+Type `settings` in Heimdall, or right-click the tray icon and pick **Settings**. To change the hotkey, select **Hotkey**, press Enter, then press your new shortcut. Press <kbd>Win</kbd> on its own there to open Heimdall instead of the Start menu, Win shortcuts like <kbd>Win</kbd> + <kbd>E</kbd> keep working, or tap <kbd>Ctrl</kbd> twice to open it with a double Ctrl. Theme, glass, shadow, corners, animations, the tray icon, starting with Windows, clearing the search on close, closing after copying a path, how many recent items and search results are shown, and updates all change with one Enter each. **Clear recent items** is there too, pinned items stay.
 
 Everything else lives in `%APPDATA%\Heimdall\config.toml`, which gets created the first time Heimdall runs. Changes there apply the next time Heimdall opens.
 
 ```toml
-hotkey = "Alt+Space"          # or "F5", "Ctrl+Shift+K", "Win" ...
+hotkey = "Alt+Space"          # or "F5", "Ctrl+Shift+K", "Win", "Double Ctrl" ...
 passthrough = ["chrome.exe"]  # apps where the hotkey keeps its normal meaning
 game_mode = true              # release the hotkey while a fullscreen game has focus
 theme = "system"              # "dark" or "light"
@@ -205,6 +212,7 @@ max_results = 8               # results shown at once while searching, scroll fo
 max_recent = 8                # pinned and recent items shown before you type
 show_recent = true
 clear_on_close = false        # open with an empty search box
+close_on_copy = false         # close after copying a path
 notes = 'D:\Vault\Inbox.md'   # where `note ...` goes, Documents\Heimdall notes.md by default
 start_with_windows = true
 updates = "auto"              # install new versions while Heimdall is closed, "notify" or "off"
