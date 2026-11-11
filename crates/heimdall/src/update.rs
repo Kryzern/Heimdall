@@ -157,6 +157,29 @@ pub fn indexer_stale() -> bool {
     }
 }
 
+/// Was the user already told about `version`? Each version is announced once.
+pub fn announced(version: &str) -> bool {
+    std::fs::read_to_string(crate::config::dir().join("update-announced.txt")).is_ok_and(|v| v.trim() == version)
+}
+
+pub fn set_announced(version: &str) {
+    std::fs::write(crate::config::dir().join("update-announced.txt"), version).ok();
+}
+
+/// Did an automatic update just install this version? True once.
+pub fn just_updated() -> bool {
+    let done = std::fs::read_to_string(attempt_file()).is_ok_and(|v| v.trim() == env!("CARGO_PKG_VERSION"));
+    if done {
+        std::fs::remove_file(attempt_file()).ok();
+    }
+    done
+}
+
+/// The release notes for `version`.
+pub fn page(version: &str) -> String {
+    format!("https://github.com/Kryzern/Heimdall/releases/tag/v{version}")
+}
+
 fn attempt_file() -> PathBuf {
     crate::config::dir().join("update-attempt.txt")
 }

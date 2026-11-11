@@ -4,6 +4,9 @@
 //! in an unassigned key, which is how Windows tells Win+something from a tap,
 //! so the Start menu stays closed while every Win+key shortcut keeps working.
 //!
+//! The same hook also spots Ctrl pressed twice in a row on its own, the other
+//! hotkey a bare modifier can't be registered for. Ctrl is never swallowed.
+//!
 //! The hook lives on its own thread. Windows gives a low-level hook a few
 //! hundred milliseconds to answer and then lets the key through without it,
 //! so it can't share a thread with drawing, searching or loading icons.
@@ -17,8 +20,18 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-/// Posted to the window when Win was tapped on its own.
+/// Posted to the window when a gesture happened: WPARAM is [`WIN`] for a tap
+/// of the Windows key, [`CTRL`] for Ctrl pressed twice.
 pub const WM_APP_WINKEY: u32 = WM_APP + 4;
+
+/// Gestures the hook watches for, as bit flags.
+pub const WIN: u32 = 1;
+pub const CTRL: u32 = 2;
+
+/// Each Ctrl press must be shorter than this, in milliseconds...
+const CTRL_HOLD: u32 = 300;
+/// ...and the second must follow the first within this.
+const CTRL_GAP: u32 = 400;
 
 /// Reserved, unassigned virtual key: what AutoHotkey uses for the same job.
 const MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
@@ -26,19 +39,27 @@ const MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
 /// Thread id of the hook thread, or 0 when the hook is off.
 static THREAD: AtomicU32 = AtomicU32::new(0);
+/// Which gestures are wanted ([`WIN`], [`CTRL`]).
+static MODE: AtomicU32 = AtomicU32::new(0);
 static TAP: Mutex<Tap> = Mutex::new(Tap { held: 0, other: false });
+static TWICE: Mutex<Twice> = Mutex::new(Twice { down_at: None, last_up: None });
 
-/// Install or remove the hook. Returns whether it is installed.
-pub fn set(hwnd: HWND, on: bool) -> bool {
+/// Watch for the gestures in `mode` (0 removes the hook). Returns whether the
+/// hook is installed.
+pub fn set(hwnd: HWND, mode: u32) -> bool {
     TARGET.store(hwnd.0 as isize, Ordering::Relaxed);
+    MODE.store(mode, Ordering::Relaxed);
     let cur = THREAD.load(Ordering::Relaxed);
-    if !on {
+    if mode == 0 {
         if cur != 0 {
             unsafe { PostThreadMessageW(cur, WM_QUIT, WPARAM(0), LPARAM(0)).ok() };
             THREAD.store(0, Ordering::Relaxed);
         }
         if let Ok(mut t) = TAP.lock() {
             *t = Tap::default();
+        }
+        if let Ok(mut t) = TWICE.lock() {
+            *t = Twice::default();
         }
         return false;
     }
@@ -114,6 +135,48 @@ impl Tap {
     }
 }
 
+/// Tracks Ctrl pressed twice on its own. Times are the hook's millisecond
+/// timestamps.
+#[derive(Default)]
+struct Twice {
+    /// When the Ctrl being held went down, if it's a fresh press.
+    down_at: Option<u32>,
+    /// When the last short, clean press of Ctrl ended.
+    last_up: Option<u32>,
+}
+
+impl Twice {
+    /// Returns true on the key-up that completes the second press.
+    fn key(&mut self, vk: u32, down: bool, was_down: bool, time: u32) -> bool {
+        let ctrl = matches!(vk, 0x11 | 0xA2 | 0xA3);
+        if !ctrl {
+            // Any other key (Ctrl+C, typing) breaks the sequence.
+            if down {
+                *self = Twice::default();
+            }
+            return false;
+        }
+        if down {
+            if !was_down {
+                self.down_at = Some(time);
+            }
+            return false;
+        }
+        let Some(at) = self.down_at.take() else { return false };
+        if time.wrapping_sub(at) > CTRL_HOLD {
+            // Held down: used with the mouse or just resting on it.
+            self.last_up = None;
+            return false;
+        }
+        if self.last_up.is_some_and(|up| at.wrapping_sub(up) <= CTRL_GAP) {
+            self.last_up = None;
+            return true;
+        }
+        self.last_up = Some(time);
+        false
+    }
+}
+
 unsafe extern "system" fn hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let k = &*(lp.0 as *const KBDLLHOOKSTRUCT);
@@ -122,7 +185,12 @@ unsafe extern "system" fn hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             let down = matches!(wp.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
             // Inside the hook the key state isn't updated for this event yet.
             let was_down = GetAsyncKeyState(k.vkCode as i32) as u16 & 0x8000 != 0;
-            let act = TAP.lock().map(|mut t| t.key(k.vkCode, down, was_down)).unwrap_or(Act::Pass);
+            let mode = MODE.load(Ordering::Relaxed);
+            let target = HWND(TARGET.load(Ordering::Relaxed) as *mut _);
+            if mode & CTRL != 0 && TWICE.lock().is_ok_and(|mut t| t.key(k.vkCode, down, was_down, k.time)) {
+                PostMessageW(Some(target), WM_APP_WINKEY, WPARAM(CTRL as usize), LPARAM(0)).ok();
+            }
+            let act = if mode & WIN != 0 { TAP.lock().map(|mut t| t.key(k.vkCode, down, was_down)).unwrap_or(Act::Pass) } else { Act::Pass };
             if act == Act::Tapped {
                 // Swallow the real key-up and replay it after the mask key.
                 let key = |vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
@@ -135,8 +203,7 @@ unsafe extern "system" fn hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     key(VIRTUAL_KEY(k.vkCode as u16), KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY),
                 ];
                 SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-                let target = HWND(TARGET.load(Ordering::Relaxed) as *mut _);
-                PostMessageW(Some(target), WM_APP_WINKEY, WPARAM(0), LPARAM(0)).ok();
+                PostMessageW(Some(target), WM_APP_WINKEY, WPARAM(WIN as usize), LPARAM(0)).ok();
                 return LRESULT(1);
             }
         }
@@ -185,6 +252,61 @@ mod tests {
         // Back at the desktop, a plain tap.
         assert_eq!(t.key(WIN, true, false), Act::Pass);
         assert_eq!(t.key(WIN, false, true), Act::Tapped);
+    }
+
+    const CTRL_L: u32 = 0xA2;
+    const CTRL_R: u32 = 0xA3;
+
+    /// Press and release `vk` at `t`, held for `hold` ms. True if it fired.
+    fn tap(t: &mut Twice, vk: u32, at: u32, hold: u32) -> bool {
+        t.key(vk, true, false, at);
+        t.key(vk, false, true, at + hold)
+    }
+
+    #[test]
+    fn ctrl_twice_fires() {
+        let mut t = Twice::default();
+        assert!(!tap(&mut t, CTRL_L, 1000, 80));
+        assert!(tap(&mut t, CTRL_L, 1250, 80));
+        // A third press starts a new pair.
+        assert!(!tap(&mut t, CTRL_L, 1500, 80));
+    }
+
+    #[test]
+    fn either_ctrl_counts() {
+        let mut t = Twice::default();
+        tap(&mut t, CTRL_L, 0, 50);
+        assert!(tap(&mut t, CTRL_R, 200, 50));
+    }
+
+    #[test]
+    fn ctrl_too_slow_or_held() {
+        let mut t = Twice::default();
+        tap(&mut t, CTRL_L, 0, 80);
+        assert!(!tap(&mut t, CTRL_L, 900, 80));
+        let mut t = Twice::default();
+        tap(&mut t, CTRL_L, 0, 600);
+        assert!(!tap(&mut t, CTRL_L, 700, 80));
+    }
+
+    #[test]
+    fn ctrl_shortcut_breaks_it() {
+        // Ctrl, then Ctrl+C: the second press is a shortcut.
+        let mut t = Twice::default();
+        tap(&mut t, CTRL_L, 0, 80);
+        t.key(CTRL_L, true, false, 200);
+        t.key(0x43, true, false, 230);
+        t.key(0x43, false, true, 260);
+        assert!(!t.key(CTRL_L, false, true, 280));
+    }
+
+    #[test]
+    fn ctrl_auto_repeat_keeps_the_press() {
+        let mut t = Twice::default();
+        tap(&mut t, CTRL_L, 0, 80);
+        t.key(CTRL_L, true, false, 200);
+        t.key(CTRL_L, true, true, 230);
+        assert!(t.key(CTRL_L, false, true, 260));
     }
 
     #[test]

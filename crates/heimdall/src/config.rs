@@ -7,8 +7,8 @@ use std::time::SystemTime;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Global hotkey, e.g. "Alt+Space", "F5", "Ctrl+Shift+K", or "Win" to
-    /// open Heimdall instead of the Start menu.
+    /// Global hotkey, e.g. "Alt+Space", "F5", "Ctrl+Shift+K", "Double Ctrl"
+    /// (Ctrl pressed twice), or "Win" to open Heimdall instead of the Start menu.
     pub hotkey: String,
     /// Executables (e.g. "chrome.exe") in which the hotkey is released so the
     /// key keeps its normal meaning there.
@@ -40,6 +40,8 @@ pub struct Config {
     pub show_recent: bool,
     /// Start with an empty search box instead of the last search.
     pub clear_on_close: bool,
+    /// Close Heimdall after copying a path, ready to paste it somewhere.
+    pub close_on_copy: bool,
     /// Markdown file that `note ...` appends to. Empty means
     /// Documents\Heimdall notes.md.
     pub notes: String,
@@ -78,6 +80,7 @@ impl Default for Config {
             max_recent: 8,
             show_recent: true,
             clear_on_close: false,
+            close_on_copy: false,
             notes: String::new(),
             start_with_windows: true,
             updates: "auto".into(),
@@ -97,7 +100,7 @@ const HEADER: &str = "\
 # Heimdall configuration. Saved changes apply the next time Heimdall opens.
 # Most of these can also be changed from Heimdall itself: type `settings`.
 #
-# hotkey       e.g. \"Alt+Space\", \"F5\", \"Ctrl+Shift+K\", or \"Win\" to replace the Start menu
+# hotkey       e.g. \"Alt+Space\", \"F5\", \"Ctrl+Shift+K\", \"Double Ctrl\", or \"Win\" to replace the Start menu
 # passthrough  apps where the hotkey keeps its normal meaning, e.g. [\"chrome.exe\"]
 # game_mode    release the hotkey while a fullscreen game or video has focus
 # theme        \"system\" | \"dark\" | \"light\"
@@ -113,6 +116,7 @@ const HEADER: &str = "\
 # updates      \"auto\" (install new versions while Heimdall is closed) | \"notify\" | \"off\"
 # tray         show an icon in the notification area
 # clear_on_close  open with an empty search box instead of the last search
+# close_on_copy   close Heimdall after copying a path (Ctrl+C or Copy path)
 # notes        Markdown file that `note ...` appends to, e.g. 'D:\\Vault\\Inbox.md'
 # [[web]]      prefix searches: type `g rust lifetimes`
 
@@ -172,6 +176,24 @@ pub fn save(c: &Config) {
 /// RegisterHotKey hotkey, so it goes through a keyboard hook instead.
 pub fn is_win_key(s: &str) -> bool {
     matches!(s.trim().to_ascii_lowercase().as_str(), "win" | "windows" | "super")
+}
+
+/// "Double Ctrl": Ctrl pressed twice in a row.
+pub fn is_double_ctrl(s: &str) -> bool {
+    let s: String = s.to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    matches!(s.as_str(), "doublectrl" | "ctrlctrl" | "doublecontrol")
+}
+
+/// The key-hook gestures (`winkey::WIN`, `winkey::CTRL`) a hotkey needs, or 0
+/// for an ordinary shortcut.
+pub fn hook_gesture(s: &str) -> u32 {
+    if is_win_key(s) {
+        1
+    } else if is_double_ctrl(s) {
+        2
+    } else {
+        0
+    }
 }
 
 /// Parse "Ctrl+Shift+K" into (MOD_* flags, virtual-key code).

@@ -38,6 +38,7 @@ const G_NOTE: char = '\u{E70B}';
 const G_CLEAR: char = '\u{E894}';
 const G_LIST: char = '\u{E8FD}';
 const G_UPDATE: char = '\u{E895}';
+const G_COPY: char = '\u{E8C8}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -202,6 +203,7 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
     let sys: &[(&str, &str, char, SysCmd)] = &[
         ("Lock", "lock computer screen", G_LOCK, SysCmd::Lock),
         ("Sleep", "sleep suspend", G_SLEEP, SysCmd::Sleep),
+        ("Hibernate", "hibernate", G_SLEEP, SysCmd::Hibernate),
         ("Restart", "restart reboot", G_RESTART, SysCmd::Restart),
         ("Shut down", "shutdown power off turn off", G_POWER, SysCmd::Shutdown),
         ("Sign out", "sign out log off logout", G_SIGNOUT, SysCmd::SignOut),
@@ -209,6 +211,9 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
         ("Windows Settings", "settings control panel", G_SETTINGS, SysCmd::Settings),
     ];
     for &(title, aliases, glyph, cmd) in sys {
+        if cmd == SysCmd::Hibernate && !crate::actions::can_hibernate() {
+            continue;
+        }
         let best = std::iter::once(title)
             .chain(aliases.split(' '))
             .filter_map(|a| fuzzy_words(q, &Target::new(a)).map(|(s, _)| s))
@@ -217,7 +222,7 @@ fn commands(q: &str, ctx: &Ctx, out: &mut Vec<Item>) {
             let mut it = Item::new(title, "System", Kind::System, Icon::Glyph(glyph), Action::System(cmd))
                 .with_key(format!("s:{title}"));
             it.score = score - 40;
-            it.confirm = matches!(cmd, SysCmd::Restart | SysCmd::Shutdown | SysCmd::SignOut);
+            it.confirm = matches!(cmd, SysCmd::Hibernate | SysCmd::Restart | SysCmd::Shutdown | SysCmd::SignOut);
             if let Some((_, pos)) = fuzzy_words(q, &Target::new(title)) {
                 it.hl = ranges16(title, &pos);
             }
@@ -491,7 +496,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, ha
     let hotkey_sub = match (recording, notice) {
         (true, _) => "Press the new shortcut now. Esc cancels.".to_string(),
         (false, Some(n)) => n.to_string(),
-        (false, None) => "The shortcut that opens Heimdall. Press Win alone to replace the Start menu".to_string(),
+        (false, None) => "The shortcut that opens Heimdall. Press Win alone to replace the Start menu, or Ctrl twice".to_string(),
     };
     let hotkey_value = if recording { "\u{2026}".to_string() } else { cfg.hotkey.clone() };
     let rows: Vec<(&str, String, char, Setting, String)> = vec![
@@ -507,6 +512,7 @@ pub fn settings(q: &str, cfg: &Config, recording: bool, notice: Option<&str>, ha
         ("Recent items shown", "Pinned and recent items listed before you type".into(), G_RECENT, S::RecentRows, cfg.max_recent.clamp(3, 14).to_string()),
         ("Search results shown", "Results listed at once while searching; scroll for more".into(), G_LIST, S::SearchRows, cfg.max_results.clamp(3, 14).to_string()),
         ("Clear search on close", "Open with an empty search box every time".into(), G_CLEAR, S::ClearOnClose, on(cfg.clear_on_close)),
+        ("Close after copying a path", "Ctrl+C or Copy path closes Heimdall so you can paste right away".into(), G_COPY, S::CloseOnCopy, on(cfg.close_on_copy)),
         ("Game mode", "Release the hotkey while a fullscreen game has focus".into(), G_GAME, S::GameMode, on(cfg.game_mode)),
         ("Updates", update_note.into(), G_UPDATE, S::Updates, cap(&cfg.updates)),
     ];

@@ -54,6 +54,7 @@ pub enum Icon {
 pub enum SysCmd {
     Lock,
     Sleep,
+    Hibernate,
     Restart,
     Shutdown,
     SignOut,
@@ -90,6 +91,7 @@ pub enum Setting {
     Animations,
     Recent,
     ClearOnClose,
+    CloseOnCopy,
     GameMode,
     SearchRows,
     RecentRows,

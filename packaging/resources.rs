@@ -11,7 +11,9 @@ fn embed_resources() {
     let mut nums = version.split(['.', '-', '+']).map(|n| n.parse::<u16>().unwrap_or(0));
     let (a, b, c) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0), nums.next().unwrap_or(0));
     let name = env("CARGO_PKG_NAME");
-    let desc = env("CARGO_PKG_DESCRIPTION").replace('"', "'");
+    // Windows shows the description as the app's name in notifications and
+    // Task Manager, so the launcher's is just its name.
+    let desc = if name == "heimdall" { "Heimdall".to_string() } else { env("CARGO_PKG_DESCRIPTION").replace('"', "'") };
     let rc = format!(
         r#"1 ICON "{icon}"
 1 VERSIONINFO

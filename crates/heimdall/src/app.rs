@@ -225,6 +225,10 @@ pub struct App {
     update_at: Option<Instant>,
     /// The update row was picked: install as soon as the download is done.
     install_asked: bool,
+    /// A version being downloaded to install quietly, to report if it fails.
+    quiet_download: Option<String>,
+    /// What clicking the current notification opens.
+    notify_url: Option<String>,
     indexer_stale: bool,
     user_moved: bool,
     confirm_key: Option<String>,
@@ -323,6 +327,8 @@ impl App {
             moving_pin: None,
             updater: Updater::new(hwnd),
             update_at: None,
+            quiet_download: None,
+            notify_url: None,
             install_asked: false,
             indexer_stale: false,
             user_moved: false,
@@ -366,6 +372,10 @@ impl App {
         };
         app.set_hotkey(true);
         app.sync_tray();
+        if update::just_updated() {
+            let v = env!("CARGO_PKG_VERSION");
+            app.notify(&format!("Heimdall updated to {v}"), "Click to see what's new.", update::page(v));
+        }
         app.check_updates(false);
         app
     }
@@ -378,10 +388,11 @@ impl App {
             return;
         }
         unsafe {
-            if on && config::is_win_key(&self.cfg.hotkey) {
-                self.hotkey_registered = crate::winkey::set(self.hwnd, true);
+            let gesture = config::hook_gesture(&self.cfg.hotkey);
+            if on && gesture != 0 {
+                self.hotkey_registered = crate::winkey::set(self.hwnd, gesture);
             } else if on {
-                crate::winkey::set(self.hwnd, false);
+                crate::winkey::set(self.hwnd, 0);
                 match config::parse_hotkey(&self.cfg.hotkey) {
                     Some((mods, vk)) => {
                         let ok = RegisterHotKey(Some(self.hwnd), HOTKEY_ID, HOT_KEY_MODIFIERS(mods | MOD_NOREPEAT.0), vk);
@@ -394,7 +405,7 @@ impl App {
                 }
             } else {
                 // Either kind may be active after the config changed underneath.
-                crate::winkey::set(self.hwnd, false);
+                crate::winkey::set(self.hwnd, 0);
                 UnregisterHotKey(Some(self.hwnd), HOTKEY_ID).ok();
                 self.hotkey_registered = false;
             }
@@ -404,6 +415,30 @@ impl App {
     fn sync_tray(&mut self) {
         let tip = format!("Heimdall ({})", self.cfg.hotkey);
         self.tray.set(self.cfg.tray, &tip);
+    }
+
+    /// A notification from the tray. Clicking it opens `url`.
+    fn notify(&mut self, title: &str, text: &str, url: String) {
+        let tip = format!("Heimdall ({})", self.cfg.hotkey);
+        self.notify_url = Some(url);
+        self.tray.notify(self.cfg.tray, &tip, title, text);
+    }
+
+    /// Tell the user about a new version once, unless it's about to install
+    /// itself quietly.
+    fn announce_update(&mut self, r: &update::Release) {
+        if update::announced(&r.version) {
+            return;
+        }
+        update::set_announced(&r.version);
+        let title = format!("Heimdall {} is out", r.version);
+        let text = match update::install_kind() {
+            _ if update::tried(&r.version) => "It couldn't install itself. Click to download it.",
+            Install::Scoop => "Run scoop update heimdall to get it. Click to see what's new.",
+            Install::Portable => "Click to see what's new and download it.",
+            Install::Setup => "Open Heimdall to install it, or click to see what's new.",
+        };
+        self.notify(&title, text, r.page.clone());
     }
 
     /// Remove the tray icon before exiting so it doesn't linger until hovered.
@@ -585,8 +620,14 @@ impl App {
         match self.updater.state() {
             UpdateState::Available(r) => {
                 crate::log(format!("update: {} is available", r.version));
-                if self.self_updates() && r.setup.is_some() && (self.quiet_update(&r.version) || self.install_asked) {
+                let quiet = self.quiet_update(&r.version);
+                if self.self_updates() && r.setup.is_some() && (quiet || self.install_asked) {
+                    if !self.install_asked {
+                        self.quiet_download = Some(r.version.clone());
+                    }
                     self.updater.download();
+                } else if !self.install_asked {
+                    self.announce_update(&r);
                 }
             }
             UpdateState::Ready(..) if self.install_asked => {
@@ -595,7 +636,14 @@ impl App {
             }
             UpdateState::Failed if self.install_asked => {
                 self.install_asked = false;
+                self.quiet_download = None;
                 crate::log("update: couldn't download it");
+            }
+            UpdateState::Failed => {
+                if let Some(v) = self.quiet_download.take().filter(|v| !update::announced(v)) {
+                    update::set_announced(&v);
+                    self.notify(&format!("Heimdall {v} is out"), "It couldn't download itself. Click to download it.", update::page(&v));
+                }
             }
             UpdateState::Ready(..) => self.install_if_idle(),
             _ => {}
@@ -1180,8 +1228,9 @@ impl App {
                 self.notice = None;
                 // Unregister so pressing the current hotkey arrives here as keys.
                 self.set_hotkey(false);
-                // Win on its own never arrives as a key: the hook reports it.
-                crate::winkey::set(self.hwnd, true);
+                // Win on its own never arrives as a key, and Ctrl twice isn't
+                // a shortcut: the hook reports both.
+                crate::winkey::set(self.hwnd, crate::winkey::WIN | crate::winkey::CTRL);
             }
             Setting::Autostart => {
                 c.start_with_windows = !c.start_with_windows;
@@ -1195,6 +1244,7 @@ impl App {
             Setting::Animations => c.animations = !c.animations,
             Setting::Recent => c.show_recent = !c.show_recent,
             Setting::ClearOnClose => c.clear_on_close = !c.clear_on_close,
+            Setting::CloseOnCopy => c.close_on_copy = !c.close_on_copy,
             Setting::GameMode => c.game_mode = !c.game_mode,
             Setting::SearchRows => c.max_results = next_count(c.max_results),
             Setting::RecentRows => c.max_recent = next_count(c.max_recent),
@@ -1250,16 +1300,20 @@ impl App {
         self.select_key(key);
     }
 
-    /// Win was tapped on its own: the hotkey, or a new hotkey being recorded.
-    fn win_tapped(&mut self) {
+    /// Win was tapped on its own or Ctrl pressed twice: the hotkey, or a new
+    /// hotkey being recorded.
+    fn win_tapped(&mut self, gesture: u32) {
         if !self.recording {
-            self.toggle();
+            // While recording both are watched; afterwards only the chosen one.
+            if gesture & config::hook_gesture(&self.cfg.hotkey) != 0 {
+                self.toggle();
+            }
             return;
         }
         let key = self.items.get(self.sel).map(|i| i.key.clone());
         self.recording = false;
         self.notice = None;
-        self.cfg.hotkey = "Win".into();
+        self.cfg.hotkey = if gesture == crate::winkey::CTRL { "Double Ctrl" } else { "Win" }.into();
         self.set_hotkey(true);
         self.save_config();
         self.sync_tray();
@@ -1420,6 +1474,9 @@ impl App {
             Act::CopyPath => {
                 if let Some(p) = &path {
                     actions::copy_text(self.hwnd, p);
+                    if self.cfg.close_on_copy {
+                        self.hide();
+                    }
                 }
             }
             Act::Properties => {
@@ -1590,11 +1647,15 @@ impl App {
                 }
                 b'C' => {
                     if let Some(it) = self.items.get(self.sel) {
+                        let path = !matches!(it.action, Action::Copy(_)) && it.path.is_some();
                         let s = match &it.action {
                             Action::Copy(s) => s.clone(),
                             _ => it.path.clone().unwrap_or_else(|| it.title.clone()),
                         };
                         actions::copy_text(self.hwnd, &s);
+                        if path && self.cfg.close_on_copy {
+                            self.hide();
+                        }
                     }
                     return true;
                 }
@@ -2093,7 +2154,7 @@ impl App {
     fn dispatch(&mut self, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         match msg {
             WM_HOTKEY => self.toggle(),
-            crate::winkey::WM_APP_WINKEY => self.win_tapped(),
+            crate::winkey::WM_APP_WINKEY => self.win_tapped(wp.0 as u32),
             WM_KEYDOWN | WM_SYSKEYDOWN if self.recording => self.record_key(wp.0 as u16),
             // No window menu and no beep for Alt+letter.
             WM_SYSCHAR => {}
@@ -2104,6 +2165,13 @@ impl App {
             menu::WM_APP_TRAY => match (lp.0 & 0xFFFF) as u32 {
                 WM_LBUTTONUP => self.show(),
                 WM_RBUTTONUP => self.tray_menu(),
+                menu::NIN_CLICK => {
+                    if let Some(url) = self.notify_url.take() {
+                        actions::open(&url, false);
+                    }
+                    self.tray.notified();
+                }
+                menu::NIN_TIMEOUT | menu::NIN_HIDE => self.tray.notified(),
                 _ => {}
             },
             m if m == self.tray.taskbar_created => {

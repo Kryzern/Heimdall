@@ -82,6 +82,18 @@ pub fn switch_to(hwnd: isize) {
     }
 }
 
+/// Can this PC hibernate? It's turned off on many, and then the command
+/// would just sleep or do nothing, so it isn't offered.
+pub fn can_hibernate() -> bool {
+    use windows::Win32::System::Power::{GetPwrCapabilities, SYSTEM_POWER_CAPABILITIES};
+    static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CAN.get_or_init(|| {
+        let mut caps = SYSTEM_POWER_CAPABILITIES::default();
+        let ok = unsafe { GetPwrCapabilities(&mut caps) };
+        ok && caps.SystemS4 && caps.HiberFilePresent
+    })
+}
+
 pub fn system(cmd: SysCmd, hwnd: HWND) {
     let shutdown = |args: &str| {
         unsafe { ShellExecuteW(None, w!("open"), w!("shutdown.exe"), &HSTRING::from(args), PCWSTR::null(), SW_HIDE) };
@@ -93,6 +105,9 @@ pub fn system(cmd: SysCmd, hwnd: HWND) {
             }
             SysCmd::Sleep => {
                 SetSuspendState(false, false, false);
+            }
+            SysCmd::Hibernate => {
+                SetSuspendState(true, false, false);
             }
             SysCmd::Restart => shutdown("/r /t 0"),
             SysCmd::Shutdown => shutdown("/s /t 0"),

@@ -9,6 +9,10 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
 const TRAY_ID: u32 = 1;
+// Tray callbacks for the notification, as the low word of LPARAM.
+pub const NIN_CLICK: u32 = NIN_BALLOONUSERCLICK;
+pub const NIN_TIMEOUT: u32 = NIN_BALLOONTIMEOUT;
+pub const NIN_HIDE: u32 = NIN_BALLOONHIDE;
 
 pub struct Menu(HMENU);
 
@@ -74,6 +78,8 @@ fn menu_theme(dark: bool) {
 pub struct Tray {
     hwnd: HWND,
     shown: bool,
+    /// The icon was only added to show a notification and goes when it does.
+    temp: bool,
     icon: HICON,
     /// Explorer broadcasts this after it restarts; the icon must be re-added.
     pub taskbar_created: u32,
@@ -87,12 +93,15 @@ impl Tray {
             let icon = LoadImageW(Some(inst.into()), PCWSTR(1 as *const u16), IMAGE_ICON, size, size, LR_DEFAULTCOLOR)
                 .map(|h| HICON(h.0))
                 .unwrap_or_default();
-            Tray { hwnd, shown: false, icon, taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")) }
+            Tray { hwnd, shown: false, temp: false, icon, taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")) }
         }
     }
 
     /// Show, update or remove the icon.
     pub fn set(&mut self, on: bool, tip: &str) {
+        if on {
+            self.temp = false;
+        }
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: self.hwnd,
@@ -114,6 +123,37 @@ impl Tray {
             } else if !(self.shown && Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool()) {
                 self.shown = Shell_NotifyIconW(NIM_ADD, &nid).as_bool();
             }
+        }
+    }
+
+    /// Show a notification from the tray icon, which Windows shows as a toast.
+    /// With the tray icon turned off, the icon is added just for it.
+    pub fn notify(&mut self, on: bool, tip: &str, title: &str, text: &str) {
+        if !self.shown {
+            self.set(true, tip);
+            self.temp = !on;
+        }
+        let mut nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: self.hwnd,
+            uID: TRAY_ID,
+            uFlags: NIF_INFO,
+            dwInfoFlags: NIIF_USER,
+            ..Default::default()
+        };
+        for (d, c) in nid.szInfoTitle.iter_mut().zip(title.encode_utf16().take(63)) {
+            *d = c;
+        }
+        for (d, c) in nid.szInfo.iter_mut().zip(text.encode_utf16().take(255)) {
+            *d = c;
+        }
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid).ok().ok() };
+    }
+
+    /// The notification was clicked, dismissed or timed out.
+    pub fn notified(&mut self) {
+        if std::mem::take(&mut self.temp) {
+            self.set(false, "");
         }
     }
 
