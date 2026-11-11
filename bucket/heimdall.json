@@ -1,5 +1,5 @@
 {
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "A fast, lightweight, glassy launcher and file searcher for Windows",
     "homepage": "https://github.com/Kryzern/Heimdall",
     "license": "MIT",
@@ -10,8 +10,8 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/Kryzern/Heimdall/releases/download/v1.0.6/Heimdall-1.0.6-x64.zip",
-            "hash": "dedd8792098d863ef416a33db0930a88d230b70a6ffd1233bfca384b4a27ee33"
+            "url": "https://github.com/Kryzern/Heimdall/releases/download/v1.0.7/Heimdall-1.0.7-x64.zip",
+            "hash": "bd970a9a7d6980e8b7697caf50d3a848d4df3bdb1b017bd7b47d6f4e675247c7"
         }
     },
     "shortcuts": [
